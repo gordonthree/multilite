@@ -18,10 +18,6 @@
 #include "pca9633.h"
 #include "Adafruit_ADS1015.h"
 #include <Wire.h>
-#ifndef _MINI
-#include <ESP8266WebServer.h>
-//#include <Adafruit_PWMServoDriver.h>
-#endif
 
 // uncomment for ac switch module, leave comment for dc switch module
 //#define _ACMULTI true
@@ -99,7 +95,6 @@ bool safeMode = false;
 bool getTime = false;
 bool hasRGB = false;
 bool hasSerial = false;
-bool doUpload = false;
 bool fileSet = false;
 bool firstBoot = true;
 bool clientCon = false; // flag for websock connection
@@ -129,19 +124,8 @@ bool prtConfig = false; // flag to request config print via mqtt
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 
-int ch1fnc = 0, ch2fnc = 0,ch3fnc = 0, ch4fnc = 0;
-int ch1on = 0, ch2on = 0, ch3on = 0, ch4on = 0;
-int ch1off = 0, ch2off = 0, ch3off = 0, ch4off = 0;
 int ch1en = -1, ch2en = -1, ch3en = -1, ch4en = -1;
-time_t ch1start = 0, ch1end = 0, ch1rest = 0;
-time_t ch2start = 0, ch2end = 0, ch2rest = 0;
-time_t ch3start = 0, ch3end = 0, ch3rest = 0;
-time_t ch4start = 0, ch4end = 0, ch4rest = 0;
 
-#ifndef _MINI
-ESP8266WebServer httpd(80);
-//Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
-#endif
 Adafruit_ADS1115 ads;
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
@@ -156,13 +140,13 @@ PCA9633 rgbw; // instance of pca9633 library
 IPAddress timeServerIP; // time.nist.gov NTP server address
 unsigned int localPort = 2390;      // local port to listen for UDP packets
 const char* ntpServerName = "us.pool.ntp.org";
-const int NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
-byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
+const uint8_t NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
+uint8_t packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
 
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP udp;
 
-void i2c_wordwrite(int address, int cmd, int theWord) {
+void i2c_wordwrite(uint8_t address, uint8_t cmd, uint16_t theWord) {
   //  Send output register address
   Wire.beginTransmission(address);
   Wire.write(cmd); // control register
@@ -171,7 +155,7 @@ void i2c_wordwrite(int address, int cmd, int theWord) {
   Wire.endTransmission();
 }
 
-void i2c_write(int address, int cmd, int data) {
+void i2c_write(uint8_t address, uint8_t cmd, uint8_t data) {
   //  Send output register address
   Wire.beginTransmission(address);
   Wire.write(cmd); // control register
@@ -180,28 +164,28 @@ void i2c_write(int address, int cmd, int data) {
 }
 
 
-byte i2c_read(int address, int cmd) {
+uint8_t i2c_read(uint8_t address, uint8_t cmd) {
   byte result;
 
   Wire.beginTransmission(address);
   Wire.write(cmd); // control register
   Wire.endTransmission();
 
-  Wire.requestFrom(address, 1); // request two bytes
+  Wire.requestFrom(address, (uint8_t) 1); // request two bytes
   result = Wire.read();
 
   return result;
 }
 
-int i2c_wordread(int address, int cmd) {
-  int result;
-  int xlo, xhi;
+uint8_t i2c_wordread(uint8_t address, uint8_t cmd) {
+  uint16_t result;
+  uint8_t xlo, xhi;
 
   Wire.beginTransmission(address);
   Wire.write(cmd); // control register
   Wire.endTransmission();
 
-  Wire.requestFrom(address, 2); // request two bytes
+  Wire.requestFrom(address, (uint8_t) 2); // request two bytes
   xhi = Wire.read();
   xlo = Wire.read();
 
@@ -211,7 +195,7 @@ int i2c_wordread(int address, int cmd) {
   return result;
 }
 
-void i2c_readbytes(byte address, byte cmd, byte bytecnt) {
+void i2c_readbytes(uint8_t address, uint8_t cmd, uint8_t bytecnt) {
 
   Wire.beginTransmission(address);
   Wire.write(cmd); // control register
@@ -247,8 +231,8 @@ void wsSend(const char* _str) {
 
 void i2c_scan() {
   scanI2C = false;
-  byte error, address;
-  int nDevices;
+  uint8_t error, address;
+  uint8_t nDevices;
 
   if (useMQTT) mqtt.publish(mqttpub, "Scanning I2C Bus...");
 
@@ -297,99 +281,6 @@ void wsSendTime(const char* msg, time_t mytime) {
   memset(str,0,sizeof(str));
   sprintf(str, msg, mytime);
   wsSend(str);
-}
-
-void startCh1() { // setup channel 1
-  time_t epoch = now();
-  if (ch1fnc == 0) {
-    ch1en=1;
-    digitalWrite(sw1, _ON); // nothing fancy for manual mode, just turn switch on
-  } else if (ch1fnc == 1) { // duration mode
-    ch1en = 1;
-    ch1start = epoch; // current time in minutes
-    ch1end = ch1start + (ch1off * 60); // off time is ch1off minutes from now
-    ch1rest = 0; // not used for duration mode
-    digitalWrite(sw1, _ON);
-    wsSend("CH1 Duration Start");
-    wsSendTime("start %d", ch1start);
-    wsSendTime("end %d", ch1end);
-    //webSocket.sendTXT(0, str);
-  } else if (ch1fnc == 2) { // interval mode
-    ch1en = 1;
-    ch1start = epoch; // current time in minutes
-    ch1end = ch1start + (ch1on * 60); // off time is ch1on minutes from now
-    ch1rest = ch1end + (ch1off * 60); // rest time is ch1off minutes after the end
-    digitalWrite(sw1, _ON);
-    wsSend("CH1 Interval Start");
-    wsSendTime("start %d", ch1start);
-    wsSendTime("end %d", ch1end);
-  }
-}
-
-void stopCh1() { // setup channel 1
-  time_t epoch = now();
-  if (ch1fnc == 0) digitalWrite(sw1, _OFF); // turn off switch, manual mode
-  else if (ch1fnc == 1) { // duration mode
-    ch1en = 0; // stop polling
-    digitalWrite(sw1, _OFF); // turn off switch
-    wsSend("CH1 Duration Complete");
-  } else if (ch1fnc == 2) { // interval mode
-    if (epoch >= ch1rest) {
-      wsSend("CH1 Interval Looping");
-      startCh1(); // rest time over, restart interval
-      return;
-    } // otherwise, rest time...
-    digitalWrite(sw1, _OFF); // turn off switch, but keep polling
-    ch1end = ch1rest; // we just stopped, now wait for rest period.
-    wsSend("CH1 Interval Rest");
-    wsSendTime("end %d", ch1end);
-  }
-}
-
-void startCh2() { // setup channel 2
-  time_t epoch = now();
-  if (ch2fnc == 0) {
-    ch2en = 1;
-    digitalWrite(sw2, _ON); // nothing fancy for manual mode, just turn switch on
-  } else if (ch2fnc == 1) { // duration mode
-    ch2en = 1;
-    ch2start = epoch; // current time in minutes
-    ch2end = ch2start + (ch2off * 60); // off time is ch1off minutes from now
-    ch2rest = 0; // not used for duration mode
-    digitalWrite(sw2, _ON);
-    wsSend("CH2 Duration Start");
-    wsSendTime("start %d", ch2start);
-    wsSendTime("end %d", ch2end);
-  } else if (ch2fnc == 2) { // interval mode
-    ch2en = 1;
-    ch2start = epoch; // current time in minutes
-    ch2end = ch2start + (ch2on * 60); // off time is ch1on minutes from now
-    ch2rest = ch2end + (ch2off * 60); // rest time is ch1off minutes after the end
-    digitalWrite(sw2, _ON);
-    wsSend("CH2 Interval Start");
-    wsSendTime("start %d", ch2start);
-    wsSendTime("end %d", ch2end);
-  }
-}
-
-void stopCh2() { // setup channel 2
-  time_t epoch = now();
-  if (ch2fnc == 0) digitalWrite(sw2, _OFF); // turn off switch, manual mode
-  else if (ch2fnc == 1) { // duration mode
-    ch2en = 0; // stop polling
-    digitalWrite(sw2, _OFF); // turn off switch
-    wsSend("CH2 Duration Complete");
-  } else if (ch2fnc == 2) { // interval mode
-    if (epoch >= ch2rest) {
-      wsSend("CH2 Interval Looping");
-      startCh2(); // rest time over, restart interval
-      return;
-    } // otherwise, rest time...
-    wsSend("CH2 Interval Rest");
-    digitalWrite(sw2, _OFF); // turn off switch, but keep polling
-    ch2end = ch2rest; // we just stopped, now wait for rest period.
-    wsSendTime("end %d", ch1end);
-  }
 }
 
 void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
@@ -530,15 +421,13 @@ int loadConfig(bool setFSver) {
   return ver;
 }
 
-byte checkSw(byte pin) {
-  byte ret=-1;
+int checkSw(byte pin) {
+  int ret=-1;
   if (pin>=0) {
     ret = digitalRead(pin);
   }
   return ret;
 }
-
-
 
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
   // uint8_t _num = _x - 1; // client number is one less
@@ -656,81 +545,6 @@ int requestConfig(bool save) {
   return ret;
 }
 
-#ifndef _MINI
-int uploadFile(const char* _filename, const char* _fileurl) { // upload new file to fs by downloading from a remote server, rather than reflash the entire spiffs
-  int ret = false;
-  HTTPClient http;
-  //const char* fileUrl = "http://mypi3/iot/index.html";
-  //const char* fileName = "/test2.html";
-
-  if (hasSerial) Serial.printf("url %s\n", _fileurl);
-  if (hasSerial) Serial.printf("file %s\n", _filename);
-
-  http.begin(_fileurl); // init http client
-
-  // start connection and send HTTP header
-  int httpCode = http.GET();
-
-  // httpCode will be negative on error
-  if(httpCode > 0) {
-    // HTTP header has been send and Server response header has been handled
-    // file found at server
-    if(httpCode == HTTP_CODE_OK) {
-      if (hasSerial) Serial.printf("HTTP client http status %d\n", httpCode);
-
-      // get lenght of document (is -1 when Server sends no Content-Length header)
-      int len = http.getSize();
-      int paysize = len;
-
-      if (hasSerial) Serial.printf("HTTP content size %d bytes\n", paysize);
-
-      // create buffer for read
-      uint8_t buff[128] = { 0 };
-
-      // get tcp stream
-      WiFiClient * stream = http.getStreamPtr();
-
-      // create or recreate file on spiffs
-      File configFile = SPIFFS.open(_filename, "w");
-      if (!configFile) {
-        if (hasSerial) Serial.printf("Failed to open %s for write.\n",_filename);
-        return ret;
-      }
-      if (hasSerial) Serial.println("File open, write start.");
-
-      // read all data from server
-      while(http.connected() && (len > 0 || len == -1)) {
-        // get available data size
-        size_t size = stream->available();
-
-        if (size) {
-              // read up to 128 byte
-              int c = stream->readBytes(buff, ((size > sizeof(buff)) ? sizeof(buff) : size));
-
-              // write it to Serial
-              configFile.write(buff, c);
-
-              if(len > 0) {
-                  len -= c;
-              }
-        }
-      } // EoF or http connection closed
-      configFile.close();
-      http.end();
-      if (hasSerial) Serial.println("File closed, write complete.");
-      return paysize;
-    } else {
-      if (hasSerial) Serial.printf("HTTP client http error %d\n", httpCode);
-      return httpCode;
-    }
-  } else {
-    if (hasSerial) Serial.printf("HTTP client http error %d\n", httpCode);
-    return httpCode;
-  }
-
-  return 0;
-}
-#endif
 
 void fsConfig() { // load config json from FS
   if (safeMode) return; // bail out if we're in safemode
@@ -772,44 +586,27 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt broker
   else if (strcmp(cmdTxt, "green")==0) green = atoi(cmdVal);
   else if (strcmp(cmdTxt, "blue")==0) blue = atoi(cmdVal);
   else if (strcmp(cmdTxt, "white")==0) white = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "uploadurl")==0) {
-    strcpy(fileURL, cmdVal);
-    sprintf(str, "Confirm: fileURL=%s", fileURL);
-    if (useMQTT) mqtt.publish(mqttpub, str);
-    if (fileSet) doUpload = true;
-  }
-  else if (strcmp(cmdTxt, "updatefile")==0) {
-    strcpy(fileName, cmdVal);
-    sprintf(str, "Confirm: fileName=%s", fileName);
-    if (useMQTT) mqtt.publish(mqttpub, str);
-    fileSet = true;
-  }
   else {
     int i = atoi(cmdVal);
-    if      (strcmp(cmdTxt, "ch1on")==0)  ch1on = i;
-    else if (strcmp(cmdTxt, "ch1off")==0) ch1off = i;
-    else if (strcmp(cmdTxt, "ch2on")==0)  ch2on = i;
-    else if (strcmp(cmdTxt, "ch2off")==0) ch2off = i;
-    else if (strcmp(cmdTxt, "ch1fnc")==0) ch1fnc = i;
-    else if (strcmp(cmdTxt, "ch2fnc")==0) ch2fnc = i;
-    else if (strcmp(cmdTxt, "ch1en")==0) {
-      if (i == 1) startCh1(); // ON
-      else {
-        ch1fnc = 0; // switch to manual mode
-        ch1en = 0;
-        stopCh1(); // OFF
-        //wsSend("CH1 Manual Off");
+    if (strcmp(cmdTxt, "ch1en")==0) {
+      if (i == 1) { // ON
+        ch1en=1;
+        digitalWrite(sw1, _ON); // nothing fancy for manual mode, 
+      } else { // OFF
+        ch1en=0;
+        digitalWrite(sw1, _OFF); // nothing fancy for manual mode, 
       }
     }
     else if (strcmp(cmdTxt, "ch2en")==0) {
-      if (i == 1) startCh2(); // ON
-      else {
-        ch2fnc = 0; // switch to manual mode
-        ch2en = 0;
-        stopCh2(); // OFF
-        //wsSend("CH2 Manual Off");
+      if (i == 1) { // ON
+        ch2en=1;
+        digitalWrite(sw2, _ON); // nothing fancy for manual mode, 
+      } else { // OFF
+        ch2en=0;
+        digitalWrite(sw2, _OFF); // nothing fancy for manual mode, 
       }
     }
+
   }
 }
 
@@ -858,65 +655,6 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
-#ifndef _MINI
-bool loadFromSpiffs(String path){
-  String dataType = "text/plain";
-  if(path.endsWith("/")) path += "index.html";
-
-  if(path.endsWith(".src")) path = path.substring(0, path.lastIndexOf("."));
-  else if(path.endsWith(".htm")) dataType = "text/html";
-  else if(path.endsWith(".html")) dataType = "text/html";
-  else if(path.endsWith(".css")) dataType = "text/css";
-  else if(path.endsWith(".js")) dataType = "application/javascript";
-  else if(path.endsWith(".png")) dataType = "image/png";
-  else if(path.endsWith(".gif")) dataType = "image/gif";
-  else if(path.endsWith(".jpg")) dataType = "image/jpeg";
-  else if(path.endsWith(".ico")) dataType = "image/x-icon";
-  else if(path.endsWith(".xml")) dataType = "text/xml";
-  else if(path.endsWith(".pdf")) dataType = "application/pdf";
-  else if(path.endsWith(".zip")) dataType = "application/zip";
-  File dataFile = SPIFFS.open(path.c_str(), "r");
-  if (httpd.hasArg("download")) dataType = "application/octet-stream";
-  if (httpd.streamFile(dataFile, dataType) != dataFile.size()) {
-  }
-
-  dataFile.close();
-  return true;
-}
-
-void handleNotFound(){
-  if(loadFromSpiffs(httpd.uri())) return;
-  String message = "File Not Found\n\n";
-  message += "URI: ";
-  message += httpd.uri();
-  message += "\nMethod: ";
-  message += (httpd.method() == HTTP_GET)?"GET":"POST";
-  message += "\nArguments: ";
-  message += httpd.args();
-  message += "\n";
-  for (uint8_t i=0; i<httpd.args(); i++){
-    message += " NAME:"+httpd.argName(i) + "\n VALUE:" + httpd.arg(i) + "\n";
-  }
-  httpd.send(404, "text/plain", message);
-  // Serial.println(message);
-}
-#endif
-
-void doTick() {
-  time_t epoch = now();
-  if (ch1en == 1) { // only makes sense if enabled
-    if ((ch1fnc>0) && (epoch >= ch1end)) { // check end time against current time, only for mode>0 not manual mode=0
-      stopCh1();
-    }
-  }
-
-  if (ch2en == 1) { // only makes sense if enabled
-    if ((ch2fnc>0) && (epoch >= ch2end)) { // check end time against current time
-      stopCh2();
-    }
-  }
-
-}
 
 // send an NTP request to the time server at the given address
 unsigned long sendNTPpacket(IPAddress& address) {
@@ -1296,14 +1034,6 @@ void setup() {
   setSyncProvider(getNtptime); // use NTP to get current time
   setSyncInterval(600); // refresh clock every 10 min
 
-#ifndef _MINI
-  // start the webserver
-  httpd.onNotFound(handleNotFound);
-  httpd.begin();
-  // Add service to MDNS-SD
-  MDNS.addService("http", "tcp", 80);
-#endif
-
   // start websockets server
   webSocket.begin();
   webSocket.onEvent(webSocketEvent);
@@ -1510,8 +1240,6 @@ void loop() {
     mqttreconnect(); // check mqqt status
   }
 
-  doTick();
-
   if (hasRSSI) doRSSI();
   if (hasTout) doTout();
   if (hasVout) doVout();
@@ -1536,9 +1264,6 @@ void loop() {
     ArduinoOTA.handle();
     if (useMQTT) mqtt.loop();
 
-#ifndef _MINI
-    httpd.handleClient();
-#endif
     webSocket.loop();
 
     if (getTime) updateNTP(); // update time if requested by command
@@ -1546,16 +1271,6 @@ void loop() {
 
     if (hasRGB) doRGB(); // rgb updates as fast as possible
     if (rgbTest) testRGB();
-
-#ifndef _MINI
-
-    if (doUpload) { // upload file to spiffs by command
-      doUpload = false; fileSet = false;
-      int stat = uploadFile(fileName, fileURL);
-      sprintf(str, "Upload complete: %s %d bytes.",fileName,stat);
-      if (useMQTT) mqtt.publish(mqttpub, str);
-    }
-#endif
 
     if (setPolo) {
       setPolo = false; // respond to an mqtt 'ping' of sorts
