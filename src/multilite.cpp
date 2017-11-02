@@ -421,14 +421,6 @@ int loadConfig(bool setFSver) {
   return ver;
 }
 
-int checkSw(byte pin) {
-  int ret=-1;
-  if (pin>=0) {
-    ret = digitalRead(pin);
-  }
-  return ret;
-}
-
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
   // uint8_t _num = _x - 1; // client number is one less
   // if (useMQTT) mqtt.publish(mqttpub, "wsSendlabels");
@@ -549,12 +541,12 @@ int requestConfig(bool save) {
 void fsConfig() { // load config json from FS
   if (safeMode) return; // bail out if we're in safemode
   fsVer = loadConfig(true); // try to load config from SPIFFS, set firmware version in memory
-  if (fsVer!=-1) {
+  /*if (fsVer!=-1) {
     sprintf(str, "version %d", fsVer);
-  }
+  }*/
 }
 
-void getConfig() {
+void getConfig() { // start the process to get config from api server
   if (safeMode) return; // bail out if we're in safemode
   // check with automation server to get latest config version number
   httpVer = requestConfig(false); // request config from server but don't update FS
@@ -567,7 +559,7 @@ void getConfig() {
   }
 }
 
-void handleMsg(char* cmdStr) { // handle commands from mqtt broker
+void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
