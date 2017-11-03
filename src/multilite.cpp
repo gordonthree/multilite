@@ -18,6 +18,7 @@
 #include "pca9633.h"
 #include "Adafruit_ADS1015.h"
 #include <Wire.h>
+#include "wifiap.h" // local wifi information
 
 // uncomment for ac switch module, leave comment for dc switch module
 //#define _ACMULTI true
@@ -714,9 +715,6 @@ time_t getNtptime() {
     epoch = epoch - (60 * 60 * ntpOffset); // take off 4 hrs for EDT offset
     sprintf(str, "NTP epoch=%d", epoch);
     wsSend(str);
-
-
-
   }
   return epoch;
 }
@@ -986,9 +984,9 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  wifiMulti.addAP("DXtrailer", "2317239216");
+  wifiMulti.addAP(_GLM_WIFI_AP2,_GLM_WIFI_PW2);
 #else
-  wifiMulti.addAP("Tell my WiFi I love her", "2317239216");
+  wifiMulti.addAP(_GLM_WIFI_AP1,_GLM_WIFI_PW1);
 #endif
 
   int wifiConnect = 240;
