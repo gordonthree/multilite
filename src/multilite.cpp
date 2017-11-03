@@ -9,8 +9,6 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
-//#include <WiFiManager.h>         //https://github.com/tzapu/WiFiManager
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
@@ -133,7 +131,6 @@ PubSubClient mqtt(espClient);
 OneWire oneWire;
 DallasTemperature ds18b20 = NULL;
 WebSocketsServer webSocket = WebSocketsServer(81);
-ESP8266WiFiMulti wifiMulti;
 PCA9633 rgbw; // instance of pca9633 library
 
 /* Don't hardwire the IP address or we won't get the benefits of the pool.
@@ -339,7 +336,7 @@ int loadConfig(bool setFSver) {
   if (json.containsKey("sw4label"))   strcpy(sw4label, json["sw4label"]);
   if (json.containsKey("mqttserver")) strcpy(mqttserver, json["mqttserver"]);
   if (json.containsKey("vccdivsor"))  vccDivisor = atof((const char*)json["vccdivsor"]);
-  if (json.containsKey("mvpera")) mvPerA = atof((const char*)json["mvpera"]);
+  if (json.containsKey("mvpera"))     mvPerA = atof((const char*)json["mvpera"]);
 
 
   if (json.containsKey("mqttpub")) {
@@ -485,7 +482,6 @@ void wsSwitchstatus() {
     sprintf(swChr,"sw4=%u",ch4en);
     wsSend(swChr);
   }
-
 }
 
 int requestConfig(bool save) {
@@ -599,7 +595,6 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw2, _OFF); // nothing fancy for manual mode, 
       }
     }
-
   }
 }
 
@@ -657,10 +652,10 @@ unsigned long sendNTPpacket(IPAddress& address) {
   // Initialize values needed to form NTP request
   // (see URL above for details on the packets)
   packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[1] = 0;     		  // Stratum, or type of clock
+  packetBuffer[2] = 6;     		  // Polling Interval
+  packetBuffer[3] = 0xEC;  		  // Peer Clock Precision
+  								  // 8 bytes of zero for Root Delay & Root Dispersion
   packetBuffer[12]  = 49;
   packetBuffer[13]  = 0x4E;
   packetBuffer[14]  = 49;
@@ -984,18 +979,18 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  wifiMulti.addAP(_GLM_WIFI_AP2,_GLM_WIFI_PW2);
+  WiFi.begin(_GLM_WIFI_AP2,_GLM_WIFI_PW2);
 #else
-  wifiMulti.addAP(_GLM_WIFI_AP1,_GLM_WIFI_PW1);
+  WiFi.begin(_GLM_WIFI_AP1,_GLM_WIFI_PW1);
 #endif
 
-  int wifiConnect = 240;
-  while ((wifiMulti.run() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
+  int wifiConnect = 120;
+  while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
     // connecting to wifi
     delay(1000);
   }
 
-  if (wifiMulti.run() != WL_CONNECTED ) { // still not connected? reboot!
+  if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
     ESP.reset();
     delay(5000);
   }
@@ -1221,7 +1216,7 @@ void loop() {
     delay(5000); // give esp time to reboot
   }
 
-  if(wifiMulti.run() != WL_CONNECTED) { // reboot if wifi connection drops
+  if(WiFi.status() != WL_CONNECTED) { // reboot if wifi connection drops
       ESP.reset();
       delay(5000);
   }
