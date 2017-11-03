@@ -9,6 +9,7 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
+#include <ESP8266WiFiMulti.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
@@ -131,6 +132,7 @@ PubSubClient mqtt(espClient);
 OneWire oneWire;
 DallasTemperature ds18b20 = NULL;
 WebSocketsServer webSocket = WebSocketsServer(81);
+ESP8266WiFiMulti wifiMulti;
 PCA9633 rgbw; // instance of pca9633 library
 
 /* Don't hardwire the IP address or we won't get the benefits of the pool.
@@ -266,7 +268,7 @@ void httpUpdater() {
         break;
 
       case HTTP_UPDATE_NO_UPDATES:
-        if (useMQTT && !hasRGB) mqtt.publish(mqttpub, "No FW update available");
+        if (useMQTT) mqtt.publish(mqttpub, "No FW update available");
         delay(10);
         break;
 
@@ -336,7 +338,7 @@ int loadConfig(bool setFSver) {
   if (json.containsKey("sw4label"))   strcpy(sw4label, json["sw4label"]);
   if (json.containsKey("mqttserver")) strcpy(mqttserver, json["mqttserver"]);
   if (json.containsKey("vccdivsor"))  vccDivisor = atof((const char*)json["vccdivsor"]);
-  if (json.containsKey("mvpera"))     mvPerA = atof((const char*)json["mvpera"]);
+  if (json.containsKey("mvpera")) mvPerA = atof((const char*)json["mvpera"]);
 
 
   if (json.containsKey("mqttpub")) {
@@ -482,6 +484,7 @@ void wsSwitchstatus() {
     sprintf(swChr,"sw4=%u",ch4en);
     wsSend(swChr);
   }
+
 }
 
 int requestConfig(bool save) {
@@ -595,6 +598,7 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw2, _OFF); // nothing fancy for manual mode, 
       }
     }
+
   }
 }
 
@@ -652,10 +656,10 @@ unsigned long sendNTPpacket(IPAddress& address) {
   // Initialize values needed to form NTP request
   // (see URL above for details on the packets)
   packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     		  // Stratum, or type of clock
-  packetBuffer[2] = 6;     		  // Polling Interval
-  packetBuffer[3] = 0xEC;  		  // Peer Clock Precision
-  								  // 8 bytes of zero for Root Delay & Root Dispersion
+  packetBuffer[1] = 0;     // Stratum, or type of clock
+  packetBuffer[2] = 6;     // Polling Interval
+  packetBuffer[3] = 0xEC;  // Peer Clock Precision
+  // 8 bytes of zero for Root Delay & Root Dispersion
   packetBuffer[12]  = 49;
   packetBuffer[13]  = 0x4E;
   packetBuffer[14]  = 49;
@@ -755,11 +759,15 @@ void setupOTA() { // init arduino ide ota library
   });
   ArduinoOTA.onEnd([]() {
     //Serial.println("done!");
+    if (useMQTT) mqtt.publish(mqttpub, "OTA complete, rebooting.");
+    // ESP.restart();
+    delay(1000);
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     //Serial.print(".");
   });
   ArduinoOTA.onError([](ota_error_t error) {
+    if (useMQTT) mqtt.publish(mqttpub, "OTA failed, try again!");
     //Serial.printf("Error[%u]: ", error);
     //if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
     //else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
@@ -979,18 +987,18 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  WiFi.begin(_GLM_WIFI_AP2,_GLM_WIFI_PW2);
+  wifiMulti.addAP("DXtrailer", "2317239216");
 #else
-  WiFi.begin(_GLM_WIFI_AP1,_GLM_WIFI_PW1);
+  wifiMulti.addAP("Tell my WiFi I love her", "2317239216");
 #endif
 
-  int wifiConnect = 120;
-  while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
+  int wifiConnect = 240;
+  while ((wifiMulti.run() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
     // connecting to wifi
     delay(1000);
   }
 
-  if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
+  if (wifiMulti.run() != WL_CONNECTED ) { // still not connected? reboot!
     ESP.reset();
     delay(5000);
   }
@@ -1038,12 +1046,12 @@ void setup() {
     i2c_scan();
 
     printConfig();
-
-    if (hasRGB) setupRGB();
-    if (hasIout) setupADS();
-    if (hasSpeed) setupSpeed();
-
   }
+
+  // setup any connected modules
+  if (hasRGB) setupRGB();
+  if (hasIout) setupADS();
+  if (hasSpeed) setupSpeed();
 
   // OWDAT = 4;
   if (OWDAT>0) { // setup onewire if data line is using pin 1 or greater
@@ -1216,7 +1224,7 @@ void loop() {
     delay(5000); // give esp time to reboot
   }
 
-  if(WiFi.status() != WL_CONNECTED) { // reboot if wifi connection drops
+  if(wifiMulti.run() != WL_CONNECTED) { // reboot if wifi connection drops
       ESP.reset();
       delay(5000);
   }
