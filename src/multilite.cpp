@@ -286,8 +286,8 @@ void wsSendTime(const char* msg, time_t mytime) {
 void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
   if (!hasI2C) return; // bail out if i2c not setup
 
-  sprintf(str,"Fan %u dir %u speed %u", speedAddr, fanDirection, fanSpeed);
-  if (useMQTT) mqtt.publish(mqttpub, str);
+  //sprintf(str,"Fan %u dir %u speed %u", speedAddr, fanDirection, fanSpeed);
+  //if (useMQTT) mqtt.publish(mqttpub, str);
 
   if (speedAddr>0) {
     i2c_write(speedAddr, 0x03, fanDirection);
@@ -891,7 +891,6 @@ void mqttData() { // send mqtt messages as required
     if (rawadc) mqtt.publish(mqttpub, adcChr);
   }
 
-  if (hasRSSI) mqtt.publish(mqttpub, rssiChr);
   if (hasSpeed) doSpeedout();
 }
 
