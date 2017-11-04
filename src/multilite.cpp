@@ -84,6 +84,7 @@ int ACSoffset = 1641;
 int updateRate = 30;
 time_t oldEpoch = 0;
 uint8_t red=0,green=0,blue=0,white=0;
+uint8_t rgbwChans=57; // b00111001 four nibbles to map RGBW to pwm channels
 unsigned char updateCnt = 0;
 unsigned char newWScon = 0;
 unsigned char mqttFail = 0;
@@ -374,6 +375,8 @@ int loadConfig(bool setFSver) {
   updateRate = json["updaterate"];
   altAdcvbat = json["altadcvbat"];
   hasFan = json["hasfan"];
+  rgbwChans = json["rgbwchans"];
+
   //hasDimmer = json["hasdimmer"];
 
   if (firstBoot) { // only do this at startup, resetting switches to database values
@@ -563,7 +566,7 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
-
+  
   if (strcmp(cmdTxt, "marco")==0) setPolo = true;
   else if (strcmp(cmdTxt, "update")==0) doUpdate = true;
   else if (strcmp(cmdTxt, "getrgb")==0) getRGB = true;
@@ -579,23 +582,23 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "blue")==0) blue = atoi(cmdVal);
   else if (strcmp(cmdTxt, "white")==0) white = atoi(cmdVal);
   else {
-    int i = atoi(cmdVal);
+    uint8_t i = atoi(cmdVal);
     if (strcmp(cmdTxt, "ch1en")==0) {
       if (i == 1) { // ON
         ch1en=1;
-        digitalWrite(sw1, _ON); // nothing fancy for manual mode, 
+        digitalWrite(sw1, _ON); // nothing fancy for manual mode,
       } else { // OFF
         ch1en=0;
-        digitalWrite(sw1, _OFF); // nothing fancy for manual mode, 
+        digitalWrite(sw1, _OFF); // nothing fancy for manual mode,
       }
     }
     else if (strcmp(cmdTxt, "ch2en")==0) {
       if (i == 1) { // ON
         ch2en=1;
-        digitalWrite(sw2, _ON); // nothing fancy for manual mode, 
+        digitalWrite(sw2, _ON); // nothing fancy for manual mode,
       } else { // OFF
         ch2en=0;
-        digitalWrite(sw2, _OFF); // nothing fancy for manual mode, 
+        digitalWrite(sw2, _OFF); // nothing fancy for manual mode,
       }
     }
 
@@ -894,13 +897,18 @@ void mqttData() { // send mqtt messages as required
   if (hasSpeed) doSpeedout();
 }
 
-
 void doRGB() { // send updated values to the first four channels of the pwm chip
   // need to expand this to support four 4-channel groups, some sort of array probably
+  uint8_t _r,_g,_b,_w;
+  _r = (rgbwChans>>6); // first nibble
+  _g = (rgbwChans>>4); // next
+  _b = (rgbwChans>>2); // third
+  _w = (rgbwChans&&3); // fourth, mask off the 6 most significant bits
+
   rgbw.setpwm(0, red);
-  rgbw.setpwm(1, green);
+  rgbw.setpwm(3, green);
   rgbw.setpwm(2, blue);
-  rgbw.setpwm(3, white);
+  rgbw.setpwm(1, white);
 }
 
 void testRGB() {
