@@ -65,7 +65,7 @@ char mqttserver[32];
 char vdivsor[8];
 int OWDAT=-1; //
 int  mqttport=0;
-char mqttpub[100], mqttsub[100];
+char mqttpub[100], mqttsub[100], mqtttime[100], mqtttemp[100];
 char fwversion[6]; // storage for sketch image version
 char fsversion[6]; // storage for spiffs image version
 char theURL[128];
@@ -122,6 +122,7 @@ bool hasHostname = false; // flag for hostname being set by saved config
 bool scanI2C = false;
 bool rgbTest = false;
 bool prtConfig = false; // flag to request config print via mqtt
+bool timeOut = false; // flag to report time via mqtt
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 
@@ -347,6 +348,8 @@ int loadConfig(bool setFSver) {
     const char* mpub = json["mqttpub"];
     const char* msub = json["mqttsub"];
     sprintf(mqttpub, "%s/%s/%s",mbase, nodename, mpub);
+    sprintf(mqtttime, "%s/%s/time",mbase, nodename);
+    sprintf(mqtttemp, "%s/%s/temp",mbase, nodename);
     sprintf(mqttsub, "%s/%s/%s",mbase, nodename, msub);
   }
 
@@ -376,6 +379,7 @@ int loadConfig(bool setFSver) {
   altAdcvbat = json["altadcvbat"];
   hasFan = json["hasfan"];
   rgbwChans = json["rgbwchans"];
+  timeOut = json["timeout"];
 
   //hasDimmer = json["hasdimmer"];
 
@@ -566,7 +570,7 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
-  
+
   if (strcmp(cmdTxt, "marco")==0) setPolo = true;
   else if (strcmp(cmdTxt, "update")==0) doUpdate = true;
   else if (strcmp(cmdTxt, "getrgb")==0) getRGB = true;
@@ -714,7 +718,7 @@ time_t getNtptime() {
     // subtract seventy years:
     epoch = secsSince1900 - seventyYears;
 
-    epoch = epoch - (60 * 60 * ntpOffset); // take off 4 hrs for EDT offset
+    // epoch = epoch - (60 * 60 * ntpOffset); // take off 4 hrs for EDT offset
     sprintf(str, "NTP epoch=%d", epoch);
     wsSend(str);
   }
@@ -850,11 +854,11 @@ void wsData() { // send some websockets data if client is connected
 
 void mqttSendTime(time_t _time) {
   // if (hasRGB) return; // feature disabled if we're an rgb controller
-  if (!mqtt.connected()) return; // bail out if there's no mqtt connection
+  if ((!mqtt.connected()) || (!timeOut)) return; // bail out if there's no mqtt connection
   if (_time <= oldEpoch) return; // don't bother if it's been less than 1 second
   memset(str,0,sizeof(str));
-  sprintf(str,"time=%d", _time);
-  mqtt.publish(mqttpub, str);
+  sprintf(str,"%d", _time);
+  mqtt.publish(mqtttime, str);
   oldEpoch = _time;
 }
 
@@ -863,10 +867,9 @@ void mqttData() { // send mqtt messages as required
 
   if (timeStatus() == timeSet) mqttSendTime(now());
 
+  if (hasTout) mqtt.publish(mqtttemp, tmpChr);
+
   if (hasRGB) return; // feature disabled if we're an rgb controller
-
-  if (hasTout) mqtt.publish(mqttpub, tmpChr);
-
 
   if (hasVout) {
     mqtt.publish(mqttpub, voltsChr);
@@ -1144,7 +1147,7 @@ void doTout() {
   }
 
 
-  vStr = String("temp=") + String(temp,3);
+  vStr = String(temp,3);
   vStr.toCharArray(tmpChr, vStr.length()+1);
 }
 
