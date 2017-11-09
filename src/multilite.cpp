@@ -1256,8 +1256,8 @@ void loop() {
   if (useMQTT) mqttData(); // regular update for non RGB controllers
   if (prtConfig) printConfig(); // config print was requested
 
-  sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
   if ((!skipSleep) && (sleepEn)) {
+    sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
     if (useMQTT) mqtt.publish(mqttpub, str);
   }
 
@@ -1294,7 +1294,7 @@ void loop() {
   }
 
   if ((!skipSleep) && (sleepEn)) {
-    if ((sleepPeriod<60) || (sleepPeriod>43200)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than 12 hours
+    if ((sleepPeriod<60) || (sleepPeriod>4294)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than the counter will allow, roughly 1 hour
     sprintf(myChr,"Back in %d minutes", sleepPeriod/60);
     if (useMQTT) {
       mqtt.publish(mqttpub, myChr);
