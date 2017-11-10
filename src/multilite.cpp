@@ -45,6 +45,13 @@ const char* iotSrv = "192.168.2.30"; // automation api server name
 const char* jsonFile = "/iot.json"; // fs config filename
 const int jsonSize = 1024;
 
+#define ADC 0x49
+#define ADCPWR 0x20
+#define OFF 0x0
+#define ON 0x1
+#define IODIR 0x00
+#define GPIO 0x09
+
 char foo[8];
 char rssiChr[10];
 char myChr[32];
@@ -52,20 +59,22 @@ char voltsChr[10];
 char amps0Chr[10];
 char amps1Chr[10];
 char adcChr[10];
+int16_t adcVal[4];
+uint8_t adcEnable = 0;
 unsigned char wsConcount=0;
 int raw0=0, raw1=0, raw2=0;
 char tmpChr[10];
 unsigned char mac[6];
 char macStr[12];
 char url[100];
-char str[60];
+char str[64];
 char sw1label[32], sw2label[32], sw3label[32], sw4label[32];
 char nodename[32];
 char mqttserver[32];
 char vdivsor[8];
 int OWDAT=-1; //
 int  mqttport=0;
-char mqttpub[100], mqttsub[100], mqtttime[100], mqtttemp[100];
+char mqttpub[64], mqttsub[64], mqtttime[64], mqtttemp[64], mqttbase[64];
 char fwversion[6]; // storage for sketch image version
 char fsversion[6]; // storage for spiffs image version
 char theURL[128];
@@ -123,6 +132,7 @@ bool scanI2C = false;
 bool rgbTest = false;
 bool prtConfig = false; // flag to request config print via mqtt
 bool timeOut = false; // flag to report time via mqtt
+bool hasADC = false; // flag for ads1015 support
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 
@@ -347,10 +357,11 @@ int loadConfig(bool setFSver) {
     const char* mbase = json["mqttbase"];
     const char* mpub = json["mqttpub"];
     const char* msub = json["mqttsub"];
-    sprintf(mqttpub, "%s/%s/%s",mbase, nodename, mpub);
-    sprintf(mqtttime, "%s/%s/time",mbase, nodename);
-    sprintf(mqtttemp, "%s/%s/temp",mbase, nodename);
-    sprintf(mqttsub, "%s/%s/%s",mbase, nodename, msub);
+    sprintf(mqttbase, "%s/%s", mbase, nodename);
+    sprintf(mqttpub, "%s/%s/%s", mbase, nodename, mpub);
+    sprintf(mqtttime, "%s/%s/time", mbase, nodename);
+    sprintf(mqtttemp, "%s/%s/temp", mbase, nodename);
+    sprintf(mqttsub, "%s/%s/%s", mbase, nodename, msub);
   }
 
   sleepEn = json["sleepenable"];
@@ -368,6 +379,7 @@ int loadConfig(bool setFSver) {
   hasTpwr = json["hastpwr"]; // also serves as OWPWR
   OWDAT = json["owdat"]; // set onewire data pin
   hasI2C = json["hasi2c"];
+  hasADC = json["hasadc"];
   rawadc = json["rawadc"];
   hasI2Cpwr = json["hasi2cpwr"];
   iotSDA = json["iotsda"];
@@ -441,6 +453,7 @@ void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected 
     if (sw1type==0) strcpy(labelStr,"switch\0");
     else if (sw1type==1) strcpy(labelStr,"label\0");
     else if (sw1type==2) strcpy(labelStr,"rgb\0");
+    else if (sw1type==3) strcpy(labelStr,"adc\0");
     else if (sw1type>=8) strcpy(labelStr,"fan\0");
     sprintf(str,"%s=%s",labelStr, sw1label);
     wsSend(str);
@@ -449,6 +462,7 @@ void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected 
     if (sw2type==0) strcpy(labelStr,"switch\0");
     else if (sw2type==1) strcpy(labelStr,"label\0");
     else if (sw2type==2) strcpy(labelStr,"rgb\0");
+    else if (sw2type==3) strcpy(labelStr,"adc\0");
     sprintf(str,"%s=%s",labelStr, sw2label);
     wsSend(str);
   }
@@ -456,6 +470,7 @@ void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected 
     if (sw3type==0) strcpy(labelStr,"switch\0");
     else if (sw3type==1) strcpy(labelStr,"label\0");
     else if (sw3type==2) strcpy(labelStr,"rgb\0");
+    else if (sw3type==3) strcpy(labelStr,"adc\0");
     sprintf(str,"%s=%s",labelStr, sw3label);
     wsSend(str);
   }
@@ -463,6 +478,7 @@ void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected 
     if (sw4type==0) strcpy(labelStr,"switch\0");
     else if (sw4type==1) strcpy(labelStr,"label\0");
     else if (sw4type==2) strcpy(labelStr,"rgb\0");
+    else if (sw4type==3) strcpy(labelStr,"adc\0");
     sprintf(str,"%s=%s",labelStr, sw4label);
     wsSend(str);
   }
@@ -758,6 +774,56 @@ void mqttreconnect() {
       return; // bail out after 5 attempts
     }
   }
+}
+
+void setupADC() { // init routine for adc + io expander board
+  if (!hasI2C) return; // bail out if no i2c
+
+  //i2c_write(PUMP, IODIR, 0x00); // all ports output
+  i2c_write(ADCPWR, IODIR, 0x01); // all ports except 0 output
+
+  //i2c_write(PUMP, GPIO, 0x00); // all ports low
+  i2c_write(ADCPWR, GPIO, 0x00); // all ports low
+
+  ads.begin();
+  ads.setGain(GAIN_ONE);
+  ads.setSPS(ADS1115_DR_128SPS);
+
+  // set flags for which channels are enabled
+  if (sw1type==3) adcEnable=(adcEnable | 0x01);
+  if (sw2type==3) adcEnable=(adcEnable | 0x02);
+  if (sw3type==3) adcEnable=(adcEnable | 0x04);
+  if (sw4type==3) adcEnable=(adcEnable | 0x08);
+}
+
+int16_t getAdc(uint8_t chan) {
+  uint8_t gp = 1 << (chan + 1);
+  int16_t result;
+
+  i2c_write(ADCPWR, GPIO, gp); // power up port
+  delay(5); // wait for stable
+  result = ads.readADC_SingleEnded(chan); // take reading
+  i2c_write(ADCPWR, GPIO, 0); // power down
+
+  return result; // done
+}
+
+void printADC() { // print adc values to mqtt
+  if (!useMQTT) return;
+  for (int x=0; x<4; x++) {
+    if (adcEnable&1<<x) {
+      sprintf(str,"%s/adc%u",mqttbase,x); // example home/solar1/adc0
+      sprintf(myChr,"%d", adcVal[x]);
+      mqtt.publish(str, myChr);
+    }
+  }
+}
+
+void doADC() { // figure out which ADC to read and do it
+  for (int x=0; x<4; x++) {
+    if (adcEnable&1<<x) adcVal[x] = getAdc(x); // skip channels that are not enabled
+  }
+  printADC(); // display results
 }
 
 void setupOTA() { // init arduino ide ota library
@@ -1062,6 +1128,7 @@ void setup() {
   if (hasRGB) setupRGB();
   if (hasIout) setupADS();
   if (hasSpeed) setupSpeed();
+  if (hasADC) setupADC();
 
   // OWDAT = 4;
   if (OWDAT>0) { // setup onewire if data line is using pin 1 or greater
@@ -1073,6 +1140,8 @@ void setup() {
       ds18b20.begin(); // start one wire temp probe
     }
     if (hasTpwr>0) {
+      sprintf(str,"Onewire Power hasTpwr=%u", hasTpwr);
+      mqtt.publish(mqttpub, str);
       pinMode(hasTpwr, OUTPUT); // onewire power pin as output
       digitalWrite(hasTpwr, LOW); // ow off
     }
@@ -1255,6 +1324,7 @@ void loop() {
   if (wsConcount>0) wsData();
   if (useMQTT) mqttData(); // regular update for non RGB controllers
   if (prtConfig) printConfig(); // config print was requested
+  if (hasADC) doADC();
 
   if ((!skipSleep) && (sleepEn)) {
     sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
