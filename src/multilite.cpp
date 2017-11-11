@@ -969,9 +969,9 @@ void mqttData() { // send mqtt messages as required
 void doRGB() { // send updated values to the first four channels of the pwm chip
   // need to expand this to support four 4-channel groups, some sort of array probably
   uint8_t _r,_g,_b,_w;
-  _r = (rgbwChans>>6); // first nibble
-  _g = (rgbwChans>>4); // next
-  _b = (rgbwChans>>2); // third
+  _r = (rgbwChans>>6)&&3; // first nibble
+  _g = (rgbwChans>>4)&&3; // next
+  _b = (rgbwChans>>2)&&3; // third
   _w = (rgbwChans&&3); // fourth, mask off the 6 most significant bits
 
   rgbw.setpwm(0, red);
