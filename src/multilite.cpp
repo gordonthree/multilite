@@ -93,7 +93,8 @@ int ACSoffset = 1641;
 int updateRate = 30;
 time_t oldEpoch = 0;
 uint8_t red=0,green=0,blue=0,white=0;
-uint8_t rgbwChans=57; // b00111001 four nibbles to map RGBW to pwm channels
+uint8_t oldred=0,oldgreen=0,oldblue=0,oldwhite=0;
+uint8_t rgbwChan=57; // b00111001 four nibbles to map RGBW to pwm channels
 unsigned char updateCnt = 0;
 unsigned char newWScon = 0;
 unsigned char mqttFail = 0;
@@ -390,7 +391,7 @@ int loadConfig(bool setFSver) {
   updateRate = json["updaterate"];
   altAdcvbat = json["altadcvbat"];
   hasFan = json["hasfan"];
-  rgbwChans = json["rgbwchans"];
+  rgbwChan = json["rgbwchan"];
   timeOut = json["timeout"];
 
   //hasDimmer = json["hasdimmer"];
@@ -969,16 +970,40 @@ void mqttData() { // send mqtt messages as required
 void doRGB() { // send updated values to the first four channels of the pwm chip
   // need to expand this to support four 4-channel groups, some sort of array probably
   uint8_t _r,_g,_b,_w;
-  _r = (rgbwChans>>6)&&3; // first nibble
-  _g = (rgbwChans>>4)&&3; // next
-  _b = (rgbwChans>>2)&&3; // third
-  _w = (rgbwChans&&3); // fourth, mask off the 6 most significant bits
+  _r = (rgbwChan>>6)&3; // first nibble
+  _g = (rgbwChan>>4)&3; // next
+  _b = (rgbwChan>>2)&3; // third
+  _w = (rgbwChan&3); // fourth, mask off the 6 most significant bits
 
-  rgbw.setpwm(0, red);
-  rgbw.setpwm(3, green);
-  rgbw.setpwm(2, blue);
-  rgbw.setpwm(1, white);
+  if (oldred!=red) {
+    sprintf(str,"Update red from %u to %u", oldred,red);
+    mqtt.publish(mqttpub, str);
+    oldred=red;
+    rgbw.setpwm(_r, red);
+  }
+
+  if (oldgreen!=green) {
+    sprintf(str,"Update green from % to %u", oldgreen,green);
+    mqtt.publish(mqttpub, str);
+    oldgreen=green;
+    rgbw.setpwm(_g, green);
+  }
+
+  if (oldblue!=blue) {
+    sprintf(str,"Update blue from %u to %u", oldblue,blue);
+    mqtt.publish(mqttpub, str);
+    oldblue=blue;
+    rgbw.setpwm(_b, blue); 
+  }
+
+  if (oldwhite!=white) {
+    sprintf(str,"Update white from %u to %u", oldwhite,white);
+    mqtt.publish(mqttpub, str);
+    oldwhite=white;
+    rgbw.setpwm(_w, white);
+  }
 }
+  
 
 void testRGB() {
   red=255; blue=0; green=0; white=0;
@@ -1006,6 +1031,15 @@ void setupRGB() { // init pca9633 pwm chip
   // set all 4 channels off, just for kicks
   rgbw.setrgbw(0,0,0,0);
 
+  uint8_t _r,_g,_b,_w;
+  _r = (rgbwChan>>6)&3; // first nibble
+  _g = (rgbwChan>>4)&3; // next
+  _b = (rgbwChan>>2)&3; // third
+  _w = (rgbwChan&3); // fourth, mask off the 6 most significant bits
+
+  sprintf(str,"RGBW channel assignments %u %u %u %u", _r, _g, _b, _w);
+  mqtt.publish(mqttpub, str);
+  
 }
 
 void setupADS() {
