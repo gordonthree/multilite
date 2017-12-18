@@ -20,7 +20,7 @@
 #include "wifiap.h" // local wifi information
 
 // uncomment for ac switch module, leave comment for dc switch module
-//#define _ACMULTI true
+#define _ACMULTI true
 //#define _TRAILER true
 // owdat is set by json config now!
 
@@ -506,7 +506,6 @@ void wsSwitchstatus() {
     sprintf(swChr,"sw2=%u",ch2en);
     wsSend(swChr);
   }
-  wsSend(swChr);
   if (ch3en>=0) {
     sprintf(swChr,"sw3=%u",ch3en);
     wsSend(swChr);
@@ -515,7 +514,6 @@ void wsSwitchstatus() {
     sprintf(swChr,"sw4=%u",ch4en);
     wsSend(swChr);
   }
-
 }
 
 int requestConfig(bool save) {
@@ -629,7 +627,24 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw2, _OFF); // nothing fancy for manual mode,
       }
     }
-
+    else if (strcmp(cmdTxt, "ch3en")==0) {
+      if (i == 1) { // ON
+        ch3en=1;
+        digitalWrite(sw3, _ON); // nothing fancy for manual mode,
+      } else { // OFF
+        ch2en=0;
+        digitalWrite(sw3, _OFF); // nothing fancy for manual mode,
+      }
+    }
+    else if (strcmp(cmdTxt, "ch4en")==0) {
+      if (i == 1) { // ON
+        ch4en=1;
+        digitalWrite(sw4, _ON); // nothing fancy for manual mode,
+      } else { // OFF
+        ch4en=0;
+        digitalWrite(sw4, _OFF); // nothing fancy for manual mode,
+      }
+    }
   }
 }
 
