@@ -20,7 +20,7 @@
 #include "wifiap.h" // local wifi information
 
 // uncomment for ac switch module, leave comment for dc switch module
-//#define _ACMULTI true
+// #define _ACMULTI true
 //#define _TRAILER true
 // owdat is set by json config now!
 
@@ -74,7 +74,7 @@ char mqttserver[32];
 char vdivsor[8];
 int OWDAT=-1; //
 int  mqttport=0;
-char mqttpub[64], mqttsub[64], mqtttime[64], mqtttemp[64], mqttbase[64];
+char mqttpub[64], mqttsub[64], mqtttime[64], mqttrssi[64], mqttvolts[64], mqtttemp[64], mqttbase[64];
 char fwversion[6]; // storage for sketch image version
 char fsversion[6]; // storage for spiffs image version
 char theURL[128];
@@ -296,6 +296,12 @@ void wsSendTime(const char* msg, time_t mytime) {
   wsSend(str);
 }
 
+void wsSendStr(const char* label, const char* msg) {
+  memset(str,0,sizeof(str));
+  sprintf(str, label, msg);
+  wsSend(str);
+}
+
 void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
   if (!hasI2C) return; // bail out if i2c not setup
 
@@ -359,10 +365,12 @@ int loadConfig(bool setFSver) {
     const char* mpub = json["mqttpub"];
     const char* msub = json["mqttsub"];
     sprintf(mqttbase, "%s/%s", mbase, nodename);
-    sprintf(mqttpub, "%s/%s/%s", mbase, nodename, mpub);
-    sprintf(mqtttime, "%s/%s/time", mbase, nodename);
-    sprintf(mqtttemp, "%s/%s/temp", mbase, nodename);
-    sprintf(mqttsub, "%s/%s/%s", mbase, nodename, msub);
+    sprintf(mqttpub, "%s/%s", mqttbase, mpub);
+    sprintf(mqttsub, "%s/%s", mqttbase, msub);
+    sprintf(mqtttime, "%s/time", mqttbase);
+    sprintf(mqtttemp, "%s/temp", mqttbase);
+    sprintf(mqttrssi, "%s/rssi", mqttbase);
+    sprintf(mqttvolts, "%s/volts", mqttbase);
   }
 
   sleepEn = json["sleepenable"];
@@ -451,11 +459,11 @@ void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected 
   wsSend(str);
   char labelStr[8];
   if (sw1>=0) {
-    if (sw1type==0) strcpy(labelStr,"switch\0");
-    else if (sw1type==1) strcpy(labelStr,"label\0");
-    else if (sw1type==2) strcpy(labelStr,"rgb\0");
+    if (sw1type==0) strcpy(labelStr,"switch\0"); // plain on-off switch
+    else if (sw1type==1) strcpy(labelStr,"label\0"); // something other than a switch
+    else if (sw1type==2) strcpy(labelStr,"rgb\0"); // rgb control
     else if (sw1type==3) strcpy(labelStr,"adc\0");
-    else if (sw1type>=8) strcpy(labelStr,"fan\0");
+    else if (sw1type>=8) strcpy(labelStr,"fan\0"); // fan speed control
     sprintf(str,"%s=%s",labelStr, sw1label);
     wsSend(str);
   }
@@ -622,7 +630,24 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw2, _OFF); // nothing fancy for manual mode,
       }
     }
-
+    else if (strcmp(cmdTxt, "ch3en")==0) {
+      if (i == 1) { // ON
+        ch3en=1;
+        digitalWrite(sw3, _ON); // nothing fancy for manual mode,
+      } else { // OFF
+        ch3en=0;
+        digitalWrite(sw3, _OFF); // nothing fancy for manual mode,
+      }
+    }
+    else if (strcmp(cmdTxt, "ch4en")==0) {
+      if (i == 1) { // ON
+        ch4en=1;
+        digitalWrite(sw4, _ON); // nothing fancy for manual mode,
+      } else { // OFF
+        ch4en=0;
+        digitalWrite(sw4, _OFF); // nothing fancy for manual mode,
+      }
+    }
   }
 }
 
@@ -894,11 +919,11 @@ void wsData() { // send some websockets data if client is connected
   if (hasRGB) return; // stop here if we're an rgb controller
 
   if (hasVout) { // send bat/vcc string
-    wsSend(voltsChr);
+    wsSendStr("volts=", voltsChr);
     if (rawadc) wsSend(adcChr);
   }
 
-  if (hasRSSI) wsSend(rssiChr); // send rssi info
+  if (hasRSSI) wsSendStr("rssi=",rssiChr); // send rssi info
   if (hasSpeed) doSpeedout();
 
   if (hasTout) wsSend(tmpChr); // send temperature
@@ -913,7 +938,8 @@ void wsData() { // send some websockets data if client is connected
     if (rawadc) wsSend(str);
     memset(str,0,sizeof(str));
     sprintf(str,"raw2=%d", raw2);
-    wsSend(voltsChr);
+    // wsSend(voltsChr);
+    wsSendStr("volts=", voltsChr);
     if (rawadc) wsSend(str);
     memset(str,0,sizeof(str));
   }
@@ -939,11 +965,11 @@ void mqttData() { // send mqtt messages as required
   if (hasRGB) return; // feature disabled if we're an rgb controller
 
   if (hasVout) {
-    mqtt.publish(mqttpub, voltsChr);
+    mqtt.publish(mqttvolts, voltsChr);
     if (rawadc) mqtt.publish(mqttpub, adcChr);
   }
 
-  if (hasRSSI) mqtt.publish(mqttpub, rssiChr);
+  if (hasRSSI) mqtt.publish(mqttrssi, rssiChr);
 
   if (hasIout) {
     mqtt.publish(mqttpub, amps0Chr);
@@ -954,13 +980,13 @@ void mqttData() { // send mqtt messages as required
     sprintf(str,"raw1=%d", raw1);
     if (rawadc) mqtt.publish(mqttpub, str);
 
-    mqtt.publish(mqttpub, voltsChr);
+    mqtt.publish(mqttvolts, voltsChr);
     sprintf(str,"raw2=%d", raw2);
     if (rawadc) mqtt.publish(mqttpub, str);
   }
 
   if (hasVout) {
-    mqtt.publish(mqttpub, voltsChr);
+    mqtt.publish(mqttvolts, voltsChr);
     if (rawadc) mqtt.publish(mqttpub, adcChr);
   }
 
@@ -993,7 +1019,7 @@ void doRGB() { // send updated values to the first four channels of the pwm chip
     sprintf(str,"Update blue from %u to %u", oldblue,blue);
     mqtt.publish(mqttpub, str);
     oldblue=blue;
-    rgbw.setpwm(_b, blue); 
+    rgbw.setpwm(_b, blue);
   }
 
   if (oldwhite!=white) {
@@ -1003,7 +1029,7 @@ void doRGB() { // send updated values to the first four channels of the pwm chip
     rgbw.setpwm(_w, white);
   }
 }
-  
+
 
 void testRGB() {
   red=255; blue=0; green=0; white=0;
@@ -1039,7 +1065,7 @@ void setupRGB() { // init pca9633 pwm chip
 
   sprintf(str,"RGBW channel assignments %u %u %u %u", _r, _g, _b, _w);
   mqtt.publish(mqttpub, str);
-  
+
 }
 
 void setupADS() {
@@ -1200,11 +1226,11 @@ void doVout() {
   if (useGetvcc) {
     vBat += ESP.getVcc(); // internal voltage reference (Vcc);
     voltage = vBat / 1000.0;
-    vStr = String("vcc=") + String(voltage,3);
+    vStr = String(voltage,3);
   } else {
     vBat += analogRead(A0); // read the TOUT pin
     voltage = vBat * (vccDivisor / 1023.0); // adjust value, set 5.545 equal to your maximum expected input voltage
-    vStr = String("bat=") + String(voltage,3);
+    vStr = String(voltage,3);
   }
   sprintf(adcChr, "adc=%d", vBat);
   vStr.toCharArray(voltsChr, vStr.length()+1);
@@ -1216,16 +1242,14 @@ void doRGBout() {
   	sprintf(str, "red=%u,green=%u,blue=%u,white=%u", red, green, blue, white);
   	mqtt.publish(mqttpub, str);
   	wsSend(str);
-  } else {
-	mqtt.publish("RGB support not enabled.", str);
-  }
+  } 
   getRGB=false;
 }
 
 void doRSSI() {
   int rssi = WiFi.RSSI();
   memset(rssiChr,0,sizeof(rssiChr));
-  sprintf(rssiChr, "rssi=%d", rssi);
+  sprintf(rssiChr, "%d", rssi);
 }
 
 void doTout() {
@@ -1310,7 +1334,7 @@ void doIout() { // enable current reporting if module is so equipped
   String tmp1 = String("amps1=") + String(amps1,3);
   tmp1.toCharArray(amps1Chr, tmp1.length()+1);
 
-  String tmp2 = String("bat=") + String(voltage2,3);
+  String tmp2 = String(voltage2,3);
   tmp2.toCharArray(voltsChr, tmp2.length()+1);
 }
 
