@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include "OneWire.h"
+//#include "OneWire.h"
 #include <Time.h>
+#include <TimeLib.h>
 #include <FS.h>
 #include <ESP8266mDNS.h>
 #include <WebSocketsServer.h>
@@ -17,7 +18,7 @@
 #include "pca9633.h"
 #include "Adafruit_ADS1015.h"
 #include <Wire.h>
-#include "wifiap.h" // local wifi information
+#include "apsettings.h" // local wifi information
 
 // uncomment for ac switch module, leave comment for dc switch module
 // #define _ACMULTI true
@@ -298,7 +299,7 @@ void wsSendTime(const char* msg, time_t mytime) {
 
 void wsSendStr(const char* label, const char* msg) {
   memset(str,0,sizeof(str));
-  sprintf(str, label, msg);
+  sprintf(str, "%s=%s", label, msg);
   wsSend(str);
 }
 
@@ -919,11 +920,11 @@ void wsData() { // send some websockets data if client is connected
   if (hasRGB) return; // stop here if we're an rgb controller
 
   if (hasVout) { // send bat/vcc string
-    wsSendStr("volts=", voltsChr);
+    wsSendStr("volts", voltsChr);
     if (rawadc) wsSend(adcChr);
   }
 
-  if (hasRSSI) wsSendStr("rssi=",rssiChr); // send rssi info
+  if (hasRSSI) wsSendStr("rssi",rssiChr); // send rssi info
   if (hasSpeed) doSpeedout();
 
   if (hasTout) wsSend(tmpChr); // send temperature
@@ -939,7 +940,7 @@ void wsData() { // send some websockets data if client is connected
     memset(str,0,sizeof(str));
     sprintf(str,"raw2=%d", raw2);
     // wsSend(voltsChr);
-    wsSendStr("volts=", voltsChr);
+    wsSendStr("volts", voltsChr);
     if (rawadc) wsSend(str);
     memset(str,0,sizeof(str));
   }
@@ -1242,7 +1243,7 @@ void doRGBout() {
   	sprintf(str, "red=%u,green=%u,blue=%u,white=%u", red, green, blue, white);
   	mqtt.publish(mqttpub, str);
   	wsSend(str);
-  } 
+  }
   getRGB=false;
 }
 
