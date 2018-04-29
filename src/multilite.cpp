@@ -1124,9 +1124,9 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  wifiMulti.addAP("DXtrailer", "2317239216");
+  wifiMulti.addAP(_GLM_WIFI_AP2, _GLM_WIFI_PW2);
 #else
-  wifiMulti.addAP("Tell my WiFi I love her", "2317239216");
+  wifiMulti.addAP(_GLM_WIFI_AP1, _GLM_WIFI_PW1);
 #endif
 
   int wifiConnect = 240;
