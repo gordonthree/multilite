@@ -18,7 +18,7 @@
 #include "pca9633.h"
 #include "Adafruit_ADS1015.h"
 #include <Wire.h>
-#include "apsettings.h" // local wifi information
+#include <DHTesp.h>
 
 // uncomment for ac switch module, leave comment for dc switch module
 // #define _ACMULTI true
@@ -37,6 +37,9 @@
 // #define OWDAT 13 // dc nodes are usualy using 13 for owdat, outdoor probes use 4
 // ADC_MODE(ADC_VCC); // add for outdoor probe, rgbled module
 #endif
+
+// DHT11 always on GPIO 14 for now?
+#define DHTPIN 14
 
 #ifdef _TRAILER // iot node for rv application
 const char* iotSrv = "192.168.10.30"; // automation api server name
@@ -75,7 +78,7 @@ char mqttserver[32];
 char vdivsor[8];
 int OWDAT=-1; //
 int  mqttport=0;
-char mqttpub[64], mqttsub[64], mqtttime[64], mqttrssi[64], mqttvolts[64], mqtttemp[64], mqttbase[64];
+char mqttpub[64], mqttsub[64], mqttbase[64];
 char fwversion[6]; // storage for sketch image version
 char fsversion[6]; // storage for spiffs image version
 char theURL[128];
@@ -92,6 +95,10 @@ int sleepPeriod = 900;
 int vccOffset = 0;
 int ACSoffset = 1641;
 int updateRate = 30;
+int tstatSet = 21; // default to 21c roughly 70f
+uint8_t tstatMode=0, tstatOper=0; // default thermostat off
+int tstatAmb = 0; // ambient temperature
+uint8_t tstatRh = 0; // rel humidity
 time_t oldEpoch = 0;
 uint8_t red=0,green=0,blue=0,white=0;
 uint8_t oldred=0,oldgreen=0,oldblue=0,oldwhite=0;
@@ -117,6 +124,7 @@ bool getRGB = false;
 bool skipSleep = false; // skip next sleep cycle
 bool sleepEn = false; // disable sleep entirely
 bool useGetvcc = false; // use internal divider network
+bool hasTstat = false; // thermostat function disabled
 bool hasTout = false; // output dallas temperature
 bool hasIout = false; // output ADS current readings
 bool hasVout = false; // output voltage / onboard adc
@@ -132,6 +140,7 @@ bool doReset = false; // flag for reboot
 bool hasHostname = false; // flag for hostname being set by saved config
 bool scanI2C = false;
 bool rgbTest = false;
+bool prtTstat = false; // flag to request tstat mode print
 bool prtConfig = false; // flag to request config print via mqtt
 bool timeOut = false; // flag to report time via mqtt
 bool hasADC = false; // flag for ads1015 support
@@ -148,6 +157,7 @@ DallasTemperature ds18b20 = NULL;
 WebSocketsServer webSocket = WebSocketsServer(81);
 ESP8266WiFiMulti wifiMulti;
 PCA9633 rgbw; // instance of pca9633 library
+DHTesp dht; // instance of DHT library
 
 /* Don't hardwire the IP address or we won't get the benefits of the pool.
  *  Lookup the IP address for the host name instead */
@@ -303,6 +313,18 @@ void wsSendStr(const char* label, const char* msg) {
   wsSend(str);
 }
 
+void mqttPrintStr(char* _topic, char* myStr) {
+  if (!useMQTT) return; // abort if mqtt not setup
+  char myTopic[64];
+  sprintf(myTopic, "%s/%s", mqttbase, _topic);
+  mqtt.publish(myTopic, myStr);
+}
+void mqttPrintInt(char* myTopic, int myNum) {
+  char myStr[8];
+  sprintf(myStr, "%u", myNum);
+  mqttPrintStr(myTopic, myStr);
+}
+
 void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
   if (!hasI2C) return; // bail out if i2c not setup
 
@@ -368,10 +390,6 @@ int loadConfig(bool setFSver) {
     sprintf(mqttbase, "%s/%s", mbase, nodename);
     sprintf(mqttpub, "%s/%s", mqttbase, mpub);
     sprintf(mqttsub, "%s/%s", mqttbase, msub);
-    sprintf(mqtttime, "%s/time", mqttbase);
-    sprintf(mqtttemp, "%s/temp", mqttbase);
-    sprintf(mqttrssi, "%s/rssi", mqttbase);
-    sprintf(mqttvolts, "%s/volts", mqttbase);
   }
 
   sleepEn = json["sleepenable"];
@@ -386,6 +404,7 @@ int loadConfig(bool setFSver) {
   hasSpeed = json["hasspeed"];
   speedAddr = json["speedaddr"];
   hasRSSI = json["hasrssi"];
+  hasTstat = json["haststat"];
   hasTpwr = json["hastpwr"]; // also serves as OWPWR
   OWDAT = json["owdat"]; // set onewire data pin
   hasI2C = json["hasi2c"];
@@ -402,6 +421,8 @@ int loadConfig(bool setFSver) {
   hasFan = json["hasfan"];
   rgbwChan = json["rgbwchan"];
   timeOut = json["timeout"];
+  tstatMode = json["tstatmode"];
+  // tstatSet = jston["tstattemp"]; // maybe we only set temperature from mqtt for now?
 
   //hasDimmer = json["hasdimmer"];
 
@@ -597,16 +618,19 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
 
-  if (strcmp(cmdTxt, "marco")==0) setPolo = true;
-  else if (strcmp(cmdTxt, "update")==0) doUpdate = true;
-  else if (strcmp(cmdTxt, "getrgb")==0) getRGB = true;
-  else if (strcmp(cmdTxt, "rgbtest")==0) rgbTest = true;
-  else if (strcmp(cmdTxt, "scani2c")==0) scanI2C = true;
-  else if (strcmp(cmdTxt, "reboot")==0) doReset = true;
-  else if (strcmp(cmdTxt, "gettime")==0) getTime = true;
-  else if (strcmp(cmdTxt, "prtconfig")==0) prtConfig = true;
-  else if (strcmp(cmdTxt, "fanspd")==0) fanSpeed = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "fandir")==0) fanDirection = atoi(cmdVal);
+  if (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
+  else if (strcmp(cmdTxt, "prttstat")==0) prtTstat = true; // print thermostat config
+  else if (strcmp(cmdTxt, "update")==0) doUpdate = true; // upadte config from api
+  else if (strcmp(cmdTxt, "getrgb")==0) getRGB = true; // print RGBW color values
+  else if (strcmp(cmdTxt, "rgbtest")==0) rgbTest = true; // test RGBW output
+  else if (strcmp(cmdTxt, "scani2c")==0) scanI2C = true; // print i2c bus scan
+  else if (strcmp(cmdTxt, "reboot")==0) doReset = true; // reboot controller
+  else if (strcmp(cmdTxt, "gettime")==0) getTime = true; // print internal timestamp
+  else if (strcmp(cmdTxt, "prtconfig")==0) prtConfig = true; // print running config
+  else if (strcmp(cmdTxt, "fanspd")==0) fanSpeed = atoi(cmdVal); // set fan speed
+  else if (strcmp(cmdTxt, "fandir")==0) fanDirection = atoi(cmdVal); // set fan direction
+  else if (strcmp(cmdTxt, "settemp")==0) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
+  else if (strcmp(cmdTxt, "setmode")==0) tstatMode = atoi(cmdVal); // set thermostat mode -1 off, 0 heat, 1 cool
   else if (strcmp(cmdTxt, "red")==0) red = atoi(cmdVal);
   else if (strcmp(cmdTxt, "green")==0) green = atoi(cmdVal);
   else if (strcmp(cmdTxt, "blue")==0) blue = atoi(cmdVal);
@@ -762,7 +786,7 @@ time_t getNtptime() {
     epoch = secsSince1900 - seventyYears;
 
     // epoch = epoch - (60 * 60 * ntpOffset); // take off 4 hrs for EDT offset
-    sprintf(str, "NTP epoch=%d", epoch);
+    sprintf(str, "NTP epoch=%ld", epoch);
     wsSend(str);
   }
   return epoch;
@@ -951,8 +975,8 @@ void mqttSendTime(time_t _time) {
   if ((!mqtt.connected()) || (!timeOut)) return; // bail out if there's no mqtt connection
   if (_time <= oldEpoch) return; // don't bother if it's been less than 1 second
   memset(str,0,sizeof(str));
-  sprintf(str,"%d", _time);
-  mqtt.publish(mqtttime, str);
+  sprintf(str,"%ld", _time);
+  mqttPrintStr("time", str);
   oldEpoch = _time;
 }
 
@@ -961,34 +985,29 @@ void mqttData() { // send mqtt messages as required
 
   if (timeStatus() == timeSet) mqttSendTime(now());
 
-  if (hasTout) mqtt.publish(mqtttemp, tmpChr);
+  if (hasTout) mqttPrintStr("temp", tmpChr); // print temperature if equipped
 
-  if (hasRGB) return; // feature disabled if we're an rgb controller
+  if (hasRGB) return; // further prints disabled if we're an rgb controller to save time
 
   if (hasVout) {
-    mqtt.publish(mqttvolts, voltsChr);
-    if (rawadc) mqtt.publish(mqttpub, adcChr);
+    mqttPrintStr("volts", voltsChr); // print voltage if equipped
+    if (rawadc) mqttPrintStr("volts/raw", adcChr); // raw value
   }
 
-  if (hasRSSI) mqtt.publish(mqttrssi, rssiChr);
+  if (hasRSSI) mqttPrintStr("rssi", rssiChr); // print RSSI
 
   if (hasIout) {
-    mqtt.publish(mqttpub, amps0Chr);
-    sprintf(str,"raw0=%d", raw0);
-    if (rawadc) mqtt.publish(mqttpub, str);
+    mqttPrintStr("amps/amps0", amps0Chr);
+    sprintf(str,"%d", raw0);
+    if (rawadc) mqttPrintStr("amps/raw0", str);
 
-    mqtt.publish(mqttpub, amps1Chr);
-    sprintf(str,"raw1=%d", raw1);
-    if (rawadc) mqtt.publish(mqttpub, str);
+    mqttPrintStr("amps/amps1", amps1Chr);
+    sprintf(str,"%d", raw1);
+    if (rawadc) mqttPrintStr("amps/raw1", str);
 
-    mqtt.publish(mqttvolts, voltsChr);
-    sprintf(str,"raw2=%d", raw2);
-    if (rawadc) mqtt.publish(mqttpub, str);
-  }
-
-  if (hasVout) {
-    mqtt.publish(mqttvolts, voltsChr);
-    if (rawadc) mqtt.publish(mqttpub, adcChr);
+    mqttPrintStr("volts", voltsChr);
+    sprintf(str,"%d", raw2);
+    if (rawadc) mqttPrintStr("volts/raw", str);
   }
 
   if (hasSpeed) doSpeedout();
@@ -1010,7 +1029,7 @@ void doRGB() { // send updated values to the first four channels of the pwm chip
   }
 
   if (oldgreen!=green) {
-    sprintf(str,"Update green from % to %u", oldgreen,green);
+    sprintf(str,"Update green from %u to %u", oldgreen,green);
     mqtt.publish(mqttpub, str);
     oldgreen=green;
     rgbw.setpwm(_g, green);
@@ -1077,18 +1096,99 @@ void setupADS() {
 
 void setupSpeed() {
   speedAddr = sw1type;
-  sprintf(str,"Fan speed control enabled, using device %u.", speedAddr);
+  sprintf(str,"Fan speed function using i2c device %u.", speedAddr);
   mqtt.publish(mqttpub, str);
   speedControl(0,0); // direction 0, speed 0
 }
 
+void setupTstat() {
+  dht.setup(DHTPIN, DHTesp::DHT11);
+
+  // latching relay power-on state is unknowable, so make sure it's set to off
+  digitalWrite(sw1, _OFF);
+  delay(100);
+  digitalWrite(sw2, _ON);
+  delay(100);
+  digitalWrite(sw2, _OFF);
+
+  sprintf(str,"Thermostat function using DHT on GPIO %u.", DHTPIN);
+  mqtt.publish(mqttpub, str);
+}
+
 void printConfig() { // print relevant config bits out to mqtt
+  if (timeOut) mqtt.publish(mqttpub, "Timestamp enabled.");
   if (hasFan) mqtt.publish(mqttpub, "Fan control enabled.");
   if (hasRGB) mqtt.publish(mqttpub, "RGBW control enabled.");
   if (hasRSSI) mqtt.publish(mqttpub, "RSSI reporting enabled.");
   if (hasVout) mqtt.publish(mqttpub, "Voltage reporting enabled.");
   if (hasTout) mqtt.publish(mqttpub, "Temperature reporting enabled.");
+  if (hasTstat) mqtt.publish(mqttpub, "Thermostat function enabled.");
   prtConfig=false;
+}
+
+void doTstat() { // perform thermostat functions
+  // read data from DHT11 module
+
+  float h = dht.getHumidity();
+  float c = dht.getTemperature();
+
+  tstatAmb = (int) c;
+  tstatRh = (uint8_t) h;
+
+  // super simple hystersis logic
+  // maybe one day add some code to take weather condition, forecast and ambient outdoor temp into regard
+  if (tstatMode==1) { // heating Mode
+    if (tstatAmb<(tstatSet-1)) { // one degree below setpoint, pulse relay on briefly
+      digitalWrite(sw1, _ON);
+      delay(100);
+      digitalWrite(sw1, _OFF);
+      tstatOper=2;
+    }
+
+    if (tstatAmb>(tstatSet+1)) { // one degree above setpoint, pulse relay off briefly
+      digitalWrite(sw2, _ON);
+      delay(100);
+      digitalWrite(sw2, _OFF);
+      tstatOper=1;
+    }
+  } else if (tstatMode==2) { // cooling mode
+    if (tstatAmb<(tstatSet-1)) { // one degree below setpoint, pulse relay off briefly
+      digitalWrite(sw2, _ON);
+      delay(100);
+      digitalWrite(sw2, _OFF);
+      tstatOper=1;
+    }
+
+    if (tstatAmb>(tstatSet+1)) { // one degree above setpoint, pulse relay on briefly
+      digitalWrite(sw1, _ON);
+      delay(100);
+      digitalWrite(sw1, _OFF);
+      tstatOper=2;
+    }
+  } else {
+    tstatOper=0;
+  }
+  mqttPrintInt("tstat/oper", tstatOper);
+}
+
+void printTstat() { // print thermostat configuration specifics
+  prtTstat = false;
+  if (hasTstat) {
+    mqtt.publish(mqttpub, "Sending thermostat report.");
+
+    doTstat(); // update data
+
+    const char* _status = dht.getStatusString();
+
+    mqttPrintStr("tstat/dht", (char*) _status);
+  	mqttPrintInt("tstat/mode", tstatMode);
+    mqttPrintInt("tstat/set", tstatSet);
+    mqttPrintInt("tstat/amb", tstatAmb);
+    mqttPrintInt("tstat/rh", tstatRh);
+  } else {
+    mqtt.publish(mqttpub, "Thermostat function disabled.");
+  }
+
 }
 
 void setup() {
@@ -1124,9 +1224,9 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  wifiMulti.addAP(_GLM_WIFI_AP2, _GLM_WIFI_PW2);
+  wifiMulti.addAP("DXtrailer", "2317239216");
 #else
-  wifiMulti.addAP(_GLM_WIFI_AP1, _GLM_WIFI_PW1);
+  wifiMulti.addAP("Tell my WiFi I love her", "2317239216");
 #endif
 
   int wifiConnect = 240;
@@ -1172,17 +1272,21 @@ void setup() {
   setupOTA();
   setupMQTT();
 
+  if (useMQTT) {
+    String rebootReason = String("Last reboot cause was ") + rebootMsg;
+    rebootReason.toCharArray(str, rebootReason.length()+1);
+    mqtt.publish(mqttpub, str);
+  }
+
   // setup i2c if configured, basic sanity checking on configuration
   if (hasI2C && iotSDA>=0 && iotSCL>=0 && iotSDA!=iotSCL) {
-    sprintf(str,"I2C enabled, using SDA=%u SCL=%u", iotSDA, iotSCL);
+    sprintf(str,"I2C enabled SDA=%u SCL=%u", iotSDA, iotSCL);
     mqtt.publish(mqttpub, str);
 
     Wire.begin(iotSDA, iotSCL); // from api config file
 
     //Wire.begin(12, 14); // from api config file
     i2c_scan();
-
-    printConfig();
   }
 
   // setup any connected modules
@@ -1190,10 +1294,11 @@ void setup() {
   if (hasIout) setupADS();
   if (hasSpeed) setupSpeed();
   if (hasADC) setupADC();
+  if (hasTstat) setupTstat();
 
   // OWDAT = 4;
   if (OWDAT>0) { // setup onewire if data line is using pin 1 or greater
-    sprintf(str,"Onewire Data OWDAT=%u", OWDAT);
+    sprintf(str,"Onewire data GPIO %u", OWDAT);
     mqtt.publish(mqttpub, str);
     oneWire.begin(OWDAT);
     if (hasTout) {
@@ -1201,19 +1306,15 @@ void setup() {
       ds18b20.begin(); // start one wire temp probe
     }
     if (hasTpwr>0) {
-      sprintf(str,"Onewire Power hasTpwr=%u", hasTpwr);
+      sprintf(str,"Onewire power GPIO %u", hasTpwr);
       mqtt.publish(mqttpub, str);
       pinMode(hasTpwr, OUTPUT); // onewire power pin as output
       digitalWrite(hasTpwr, LOW); // ow off
     }
   }
 
-
-  if (useMQTT) {
-    String rebootReason = String("Last reboot cause was ") + rebootMsg;
-    rebootReason.toCharArray(str, rebootReason.length()+1);
-    mqtt.publish(mqttpub, str);
-  }
+  // send config data to mqtt
+  printConfig();
 }
 
 
@@ -1285,7 +1386,7 @@ void doSpeed() {
 
 void doIout() { // enable current reporting if module is so equipped
   if (hasRGB) return; // feature disabled if we're an rgb controller
-  int16_t adc0, adc1, adc2, adc3;
+  int16_t adc0, adc1, adc2;
   if (!hasI2C) return;
 
   memset(amps0Chr,0,sizeof(amps0Chr));
@@ -1311,11 +1412,11 @@ void doIout() { // enable current reporting if module is so equipped
   if (amps0<0.080) amps0=0.0;
   if (amps1<0.080) amps1=0.0;
   if (voltage2<0.1) voltage2=0.0;
+  /*
   char a0[9] = {};
   char a1[9] = {};
   char v2[9] = {};
 
-  /*
   dtostrf(amps1, 6, 3, a1); // convert precision decimal 6 digits to string?
   a1[8] = '\0';
   sprintf(amps1Chr, "amps1=%s", a1); // copy strings together
@@ -1371,6 +1472,7 @@ void loop() {
     mqttreconnect(); // check mqqt status
   }
 
+  if (hasTstat) doTstat();
   if (hasRSSI) doRSSI();
   if (hasTout) doTout();
   if (hasVout) doVout();
@@ -1398,6 +1500,7 @@ void loop() {
 
     webSocket.loop();
 
+    if (prtTstat) printTstat(); // update thermostat if commanded
     if (getTime) updateNTP(); // update time if requested by command
     if (scanI2C) i2c_scan();
 
@@ -1423,8 +1526,8 @@ void loop() {
   }
 
   if ((!skipSleep) && (sleepEn)) {
-    if ((sleepPeriod<60) || (sleepPeriod>4294)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than the counter will allow, roughly 1 hour
-    sprintf(myChr,"Back in %d minutes", sleepPeriod/60);
+    if ((sleepPeriod<30) || (sleepPeriod>4294)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than the counter will allow, roughly 1 hour
+    sprintf(myChr,"Back in %d seconds", sleepPeriod);
     if (useMQTT) {
       mqtt.publish(mqttpub, myChr);
       mqtt.loop();

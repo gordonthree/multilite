@@ -13,3 +13,4 @@ ArduinoJson
 Websockets
 DallasTemperature (my version)
 ArduinoOTA
+beegee-toyko DHT library https://github.com/beegee-tokyo/DHTesp
