@@ -1,8 +1,8 @@
 #include <Arduino.h>
 #include <ArduinoJson.h>
-//#include "OneWire.h"
 #include <Time.h>
 #include <TimeLib.h>
+#include <EasyNTPClient.h>
 #include <FS.h>
 #include <ESP8266mDNS.h>
 #include <WebSocketsServer.h>
@@ -38,14 +38,12 @@
 // ADC_MODE(ADC_VCC); // add for outdoor probe, rgbled module
 #endif
 
-// DHT11 always on GPIO 14 for now?
-#define DHTPIN 14
-
 #ifdef _TRAILER // iot node for rv application
 const char* iotSrv = "192.168.10.30"; // automation api server name
 #else // iot node for home application
 const char* iotSrv = "192.168.2.30"; // automation api server name
 #endif
+
 const char* jsonFile = "/iot.json"; // fs config filename
 const int jsonSize = 1024;
 
@@ -55,6 +53,7 @@ const int jsonSize = 1024;
 #define ON 0x1
 #define IODIR 0x00
 #define GPIO 0x09
+#define DHTPIN 14 // DHT11 always on GPIO 14 for now?
 
 char foo[8];
 char rssiChr[10];
@@ -159,16 +158,13 @@ ESP8266WiFiMulti wifiMulti;
 PCA9633 rgbw; // instance of pca9633 library
 DHTesp dht; // instance of DHT library
 
-/* Don't hardwire the IP address or we won't get the benefits of the pool.
- *  Lookup the IP address for the host name instead */
-IPAddress timeServerIP; // time.nist.gov NTP server address
-unsigned int localPort = 2390;      // local port to listen for UDP packets
-const char* ntpServerName = "us.pool.ntp.org";
-const uint8_t NTP_PACKET_SIZE = 48; // NTP time stamp is in the first 48 bytes of the message
-uint8_t packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming and outgoing packets
-
 // A UDP instance to let us send and receive packets over UDP
 WiFiUDP udp;
+
+/* Don't hardwire the IP address or we won't get the benefits of the pool.
+ *  Lookup the IP address for the host name instead */
+const char* ntpServerName = "us.pool.ntp.org";
+EasyNTPClient ntpClient(udp, ntpServerName);
 
 void i2c_wordwrite(uint8_t address, uint8_t cmd, uint16_t theWord) {
   //  Send output register address
@@ -186,7 +182,6 @@ void i2c_write(uint8_t address, uint8_t cmd, uint8_t data) {
   Wire.write(data);  //  send byte data
   Wire.endTransmission();
 }
-
 
 uint8_t i2c_read(uint8_t address, uint8_t cmd) {
   byte result;
@@ -374,6 +369,7 @@ int loadConfig(bool setFSver) {
     hasHostname=true;
     strcpy(nodename, json["nodename"]);
   }
+
   if (json.containsKey("sw1label"))   strcpy(sw1label, json["sw1label"]);
   if (json.containsKey("sw2label"))   strcpy(sw2label, json["sw2label"]);
   if (json.containsKey("sw3label"))   strcpy(sw3label, json["sw3label"]);
@@ -381,7 +377,6 @@ int loadConfig(bool setFSver) {
   if (json.containsKey("mqttserver")) strcpy(mqttserver, json["mqttserver"]);
   if (json.containsKey("vccdivsor"))  vccDivisor = atof((const char*)json["vccdivsor"]);
   if (json.containsKey("mvpera")) mvPerA = atof((const char*)json["mvpera"]);
-
 
   if (json.containsKey("mqttpub")) {
     const char* mbase = json["mqttbase"];
@@ -422,9 +417,6 @@ int loadConfig(bool setFSver) {
   rgbwChan = json["rgbwchan"];
   timeOut = json["timeout"];
   tstatMode = json["tstatmode"];
-  // tstatSet = jston["tstattemp"]; // maybe we only set temperature from mqtt for now?
-
-  //hasDimmer = json["hasdimmer"];
 
   if (firstBoot) { // only do this at startup, resetting switches to database values
     // setup switch pins
@@ -441,6 +433,7 @@ int loadConfig(bool setFSver) {
     byte tempsw2 = json["sw2en"];
     byte tempsw3 = json["sw3en"];
     byte tempsw4 = json["sw4en"];
+
     if (sw1>=0) {
       ch1en=tempsw1;
       pinMode(sw1, OUTPUT);
@@ -472,9 +465,6 @@ int loadConfig(bool setFSver) {
 }
 
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
-  // uint8_t _num = _x - 1; // client number is one less
-  // if (useMQTT) mqtt.publish(mqttpub, "wsSendlabels");
-  // if (_num == 0) return;
   memset(str,0,sizeof(str));
   sprintf(str,"sending labels: sw1=%d %d sw2=%d %d sw3=%d %d sw4=%d %d",sw1,sw1type,sw2,sw2type,sw3,sw3type,sw4,sw4type);
   if (useMQTT) mqtt.publish(mqttpub, str);
@@ -513,7 +503,6 @@ void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected 
     sprintf(str,"%s=%s",labelStr, sw4label);
     wsSend(str);
   }
-  // i2c_scan();
   newWScon = 0;
 }
 
@@ -676,6 +665,7 @@ void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
   }
 }
 
+// handle websocket events below
 void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length) {
   switch(type) {
       case WStype_DISCONNECTED:
@@ -721,77 +711,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
-
-// send an NTP request to the time server at the given address
-unsigned long sendNTPpacket(IPAddress& address) {
-  // Serial.println("sending NTP packet...");
-  // set all bytes in the buffer to 0
-  memset(packetBuffer, 0, NTP_PACKET_SIZE);
-  // Initialize values needed to form NTP request
-  // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011;   // LI, Version, Mode
-  packetBuffer[1] = 0;     // Stratum, or type of clock
-  packetBuffer[2] = 6;     // Polling Interval
-  packetBuffer[3] = 0xEC;  // Peer Clock Precision
-  // 8 bytes of zero for Root Delay & Root Dispersion
-  packetBuffer[12]  = 49;
-  packetBuffer[13]  = 0x4E;
-  packetBuffer[14]  = 49;
-  packetBuffer[15]  = 52;
-
-  // all NTP fields have been given values, now
-  // you can send a packet requesting a timestamp:
-  udp.beginPacket(address, 123); //NTP requests are to port 123
-  udp.write(packetBuffer, NTP_PACKET_SIZE);
-  udp.endPacket();
-}
-
-time_t getNtptime() {
-  time_t epoch = 0;
-
-  //get a random server from the pool
-  WiFi.hostByName(ntpServerName, timeServerIP);
-
-  sendNTPpacket(timeServerIP); // send an NTP packet to a time server
-  // wait to see if a reply is available
-  delay(500);
-
-  int cb = udp.parsePacket();
-  if (!cb) {
-    //Serial.println("no packet!?");
-    wsSend("NTP Error");
-  }
-  else {
-    // Serial.print("packet received, length=");
-    // Serial.println(cb);
-    // We've received a packet, read the data from it
-    udp.read(packetBuffer, NTP_PACKET_SIZE); // read the packet into the buffer
-
-    //the timestamp starts at byte 40 of the received packet and is four bytes,
-    // or two words, long. First, esxtract the two words:
-
-    unsigned long highWord = word(packetBuffer[40], packetBuffer[41]);
-    unsigned long lowWord = word(packetBuffer[42], packetBuffer[43]);
-    // combine the four bytes (two words) into a long integer
-    // this is NTP time (seconds since Jan 1 1900):
-    unsigned long secsSince1900 = highWord << 16 | lowWord;
-    // Serial.print("Seconds since Jan 1 1900 = " );
-    // Serial.println(secsSince1900);
-
-    // now convert NTP time into everyday time:
-    // Serial.print("Unix time = ");
-    // Unix time starts on Jan 1 1970. In seconds, that's 2208988800:
-    const unsigned long seventyYears = 2208988800UL;
-    // subtract seventy years:
-    epoch = secsSince1900 - seventyYears;
-
-    // epoch = epoch - (60 * 60 * ntpOffset); // take off 4 hrs for EDT offset
-    sprintf(str, "NTP epoch=%ld", epoch);
-    wsSend(str);
-  }
-  return epoch;
-}
-
+// receive mqtt messages
 void mqttcallback(char* topic, byte* payload, unsigned int len) {
   skipSleep=true; // don't go to sleep if we receive mqtt message
   char tmp[200];
@@ -800,29 +720,31 @@ void mqttcallback(char* topic, byte* payload, unsigned int len) {
   handleMsg(tmp);
 }
 
+// maintain connection to mqtt broker
 void mqttreconnect() {
   // Loop until we're reconnected
   if (!useMQTT) return; // bail out if mqtt is not configured
+
   int retry = 0;
   if (mqttFail>=100) { // repeated mqtt failure could mean network trouble, reboot esp
     ESP.reset();
     delay(5000); // give esp time to reset
   }
+
   while (!mqtt.connected()) {
     // Attempt to connect
     if (mqtt.connect(nodename)) {
       // Once connected, publish an announcement...
       mqtt.publish(mqttpub, "Hello, world!");
-      //mqtt.publish(mqttpub, macStr);
       // ... and resubscribe
       mqtt.subscribe(mqttsub);
     } else {
       // Wait before retrying
       delay(100);
     }
-    if (retry++ > 4) {
+    if (retry++ > 4) { // try five times, return to loop
       mqttFail++;
-      return; // bail out after 5 attempts
+      return;
     }
   }
 }
@@ -912,6 +834,10 @@ void setupMQTT() {
   }
 }
 
+time_t getNtptime() {
+  return ntpClient.getUnixTime();
+}
+
 void updateNTP() {
   getTime = false;
   time_t epoch = getNtptime();
@@ -986,6 +912,11 @@ void mqttData() { // send mqtt messages as required
   if (timeStatus() == timeSet) mqttSendTime(now());
 
   if (hasTout) mqttPrintStr("temp", tmpChr); // print temperature if equipped
+
+  if (hasTstat) {
+    mqttPrintInt("tstat/amb", tstatAmb);
+    mqttPrintInt("tstat/rh", tstatRh); // print temperature if equipped
+  }
 
   if (hasRGB) return; // further prints disabled if we're an rgb controller to save time
 
@@ -1126,6 +1057,33 @@ void printConfig() { // print relevant config bits out to mqtt
   prtConfig=false;
 }
 
+void doTout() {
+  String vStr;
+
+  memset(tmpChr,0,sizeof(tmpChr));
+  if (hasTpwr>0) {
+    digitalWrite(hasTpwr, HIGH); // ow on
+    delay(5); // wait for powerup
+  }
+
+  ds18b20.requestTemperatures();
+  byte retry = 20;
+  float temp=0.0;
+  do {
+    temp = ds18b20.getTempCByIndex(0);
+    retry--;
+    delay(2);
+  } while (retry > 0 && (temp == 85.0 || temp == (-127.0)));
+
+  if (hasTpwr>0) {
+    digitalWrite(hasTpwr, LOW); // ow off
+  }
+
+
+  vStr = String(temp,3);
+  vStr.toCharArray(tmpChr, vStr.length()+1);
+}
+
 void doTstat() { // perform thermostat functions
   // read data from DHT11 module
 
@@ -1142,14 +1100,14 @@ void doTstat() { // perform thermostat functions
       digitalWrite(sw1, _ON);
       delay(100);
       digitalWrite(sw1, _OFF);
-      tstatOper=2;
+      tstatOper=2; // tell everyone relay is on
     }
 
     if (tstatAmb>(tstatSet+1)) { // one degree above setpoint, pulse relay off briefly
       digitalWrite(sw2, _ON);
       delay(100);
       digitalWrite(sw2, _OFF);
-      tstatOper=1;
+      tstatOper=1; // relay off
     }
   } else if (tstatMode==2) { // cooling mode
     if (tstatAmb<(tstatSet-1)) { // one degree below setpoint, pulse relay off briefly
@@ -1166,7 +1124,7 @@ void doTstat() { // perform thermostat functions
       tstatOper=2;
     }
   } else {
-    tstatOper=0;
+    tstatOper=0; // thermostat disabled
   }
   mqttPrintInt("tstat/oper", tstatOper);
 }
@@ -1257,8 +1215,9 @@ void setup() {
   if (!safeMode) httpUpdater();
 
   // start UDP for ntp client
-  udp.begin(localPort);
+  // udp.begin(localPort);
 
+  // test ntp connection
   updateNTP();
 
   setSyncProvider(getNtptime); // use NTP to get current time
@@ -1296,7 +1255,6 @@ void setup() {
   if (hasADC) setupADC();
   if (hasTstat) setupTstat();
 
-  // OWDAT = 4;
   if (OWDAT>0) { // setup onewire if data line is using pin 1 or greater
     sprintf(str,"Onewire data GPIO %u", OWDAT);
     mqtt.publish(mqttpub, str);
@@ -1316,7 +1274,6 @@ void setup() {
   // send config data to mqtt
   printConfig();
 }
-
 
 void doVout() {
   int vBat=vccOffset;
@@ -1352,32 +1309,6 @@ void doRSSI() {
   int rssi = WiFi.RSSI();
   memset(rssiChr,0,sizeof(rssiChr));
   sprintf(rssiChr, "%d", rssi);
-}
-
-void doTout() {
-  String vStr;
-  memset(tmpChr,0,sizeof(tmpChr));
-  if (hasTpwr>0) {
-    digitalWrite(hasTpwr, HIGH); // ow on
-    delay(5); // wait for powerup
-  }
-
-  ds18b20.requestTemperatures();
-  byte retry = 20;
-  float temp=0.0;
-  do {
-    temp = ds18b20.getTempCByIndex(0);
-    retry--;
-    delay(2);
-  } while (retry > 0 && (temp == 85.0 || temp == (-127.0)));
-
-  if (hasTpwr>0) {
-    digitalWrite(hasTpwr, LOW); // ow off
-  }
-
-
-  vStr = String(temp,3);
-  vStr.toCharArray(tmpChr, vStr.length()+1);
 }
 
 void doSpeed() {

@@ -9,6 +9,7 @@ OneWire
 Hash
 pca9633
 Time
+EasyNTPClient #1734
 ArduinoJson
 Websockets
 DallasTemperature (my version)
