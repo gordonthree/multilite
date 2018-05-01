@@ -77,7 +77,7 @@ char mqttserver[32];
 char vdivsor[8];
 int OWDAT=-1; //
 int  mqttport=0;
-char mqttpub[64], mqttsub[64], mqttbase[64];
+char mqttsub[64], mqttbase[64];
 char fwversion[6]; // storage for sketch image version
 char fsversion[6]; // storage for spiffs image version
 char theURL[128];
@@ -143,6 +143,7 @@ bool prtTstat = false; // flag to request tstat mode print
 bool prtConfig = false; // flag to request config print via mqtt
 bool timeOut = false; // flag to report time via mqtt
 bool hasADC = false; // flag for ads1015 support
+bool coldBoot = true; // assume every boot is cold unless told otherwise
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 
@@ -226,6 +227,18 @@ void i2c_readbytes(uint8_t address, uint8_t cmd, uint8_t bytecnt) {
   }
 }
 
+void mqttPrintStr(char* _topic, char* myStr) {
+  if (!useMQTT) return; // abort if mqtt not setup
+  char myTopic[64];
+  sprintf(myTopic, "%s/%s", mqttbase, _topic);
+  mqtt.publish(myTopic, myStr);
+}
+void mqttPrintInt(char* myTopic, int myNum) {
+  char myStr[8];
+  sprintf(myStr, "%u", myNum);
+  mqttPrintStr(myTopic, myStr);
+}
+
 char* cleanStr(const char* _str) {
   int x=0, i=0;
   char c;
@@ -253,7 +266,7 @@ void i2c_scan() {
   uint8_t error, address;
   uint8_t nDevices;
 
-  if (useMQTT) mqtt.publish(mqttpub, "Scanning I2C Bus...");
+  if (useMQTT) mqttPrintStr("msg", "Scanning I2C Bus...");
 
   nDevices = 0;
   for(address = 1; address < 127; address++ ) {
@@ -267,14 +280,14 @@ void i2c_scan() {
       sprintf(str,"i2c dev %d: %x", nDevices, address);
       wsSend(str);
       if (useMQTT) {
-        mqtt.publish(mqttpub, str);
+        mqttPrintStr("msg", str);
         mqtt.loop();
       }
       delay(10);
       nDevices++;
     }
   }
-  if (useMQTT) mqtt.publish(mqttpub, "I2C scan complete.");
+  if (useMQTT) mqttPrintStr("msg", "I2C scan complete.");
 }
 
 void httpUpdater() {
@@ -282,12 +295,12 @@ void httpUpdater() {
 
   switch(ret) {
       case HTTP_UPDATE_FAILED:
-        if (useMQTT) mqtt.publish(mqttpub, "FW update failed");
+        if (useMQTT) mqttPrintStr("msg", "FW update failed");
         delay(10);
         break;
 
       case HTTP_UPDATE_NO_UPDATES:
-        if (useMQTT) mqtt.publish(mqttpub, "No FW update available");
+        if (useMQTT) mqttPrintStr("msg", "No FW update available");
         delay(10);
         break;
 
@@ -306,18 +319,6 @@ void wsSendStr(const char* label, const char* msg) {
   memset(str,0,sizeof(str));
   sprintf(str, "%s=%s", label, msg);
   wsSend(str);
-}
-
-void mqttPrintStr(char* _topic, char* myStr) {
-  if (!useMQTT) return; // abort if mqtt not setup
-  char myTopic[64];
-  sprintf(myTopic, "%s/%s", mqttbase, _topic);
-  mqtt.publish(myTopic, myStr);
-}
-void mqttPrintInt(char* myTopic, int myNum) {
-  char myStr[8];
-  sprintf(myStr, "%u", myNum);
-  mqttPrintStr(myTopic, myStr);
 }
 
 void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
@@ -378,12 +379,10 @@ int loadConfig(bool setFSver) {
   if (json.containsKey("vccdivsor"))  vccDivisor = atof((const char*)json["vccdivsor"]);
   if (json.containsKey("mvpera")) mvPerA = atof((const char*)json["mvpera"]);
 
-  if (json.containsKey("mqttpub")) {
+  if (json.containsKey("mqttbase")) {
     const char* mbase = json["mqttbase"];
-    const char* mpub = json["mqttpub"];
     const char* msub = json["mqttsub"];
     sprintf(mqttbase, "%s/%s", mbase, nodename);
-    sprintf(mqttpub, "%s/%s", mqttbase, mpub);
     sprintf(mqttsub, "%s/%s", mqttbase, msub);
   }
 
@@ -467,7 +466,7 @@ int loadConfig(bool setFSver) {
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
   memset(str,0,sizeof(str));
   sprintf(str,"sending labels: sw1=%d %d sw2=%d %d sw3=%d %d sw4=%d %d",sw1,sw1type,sw2,sw2type,sw3,sw3type,sw4,sw4type);
-  if (useMQTT) mqtt.publish(mqttpub, str);
+  if (useMQTT) mqttPrintStr("msg", str);
   wsSend(str);
   char labelStr[8];
   if (sw1>=0) {
@@ -672,7 +671,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
           //USE_SERIAL.printf("[%u] Disconnected!\n", num);
           wsConcount--;
           sprintf(str,"ws disconnect count=%d",wsConcount);
-          if (useMQTT) mqtt.publish(mqttpub,str);
+          if (useMQTT) mqttPrintStr("msg", str);
           break;
       case WStype_CONNECTED:
           {
@@ -693,7 +692,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
               newWScon = num + 1;
               wsConcount++;
               sprintf(str,"ws connect count=%u new=%u",wsConcount,newWScon);
-              if (useMQTT) mqtt.publish(mqttpub,str);
+              if (useMQTT) mqttPrintStr("msg",str);
           }
           break;
       case WStype_TEXT:
@@ -735,7 +734,7 @@ void mqttreconnect() {
     // Attempt to connect
     if (mqtt.connect(nodename)) {
       // Once connected, publish an announcement...
-      mqtt.publish(mqttpub, "Hello, world!");
+      mqttPrintStr("msg", "Hello, world!");
       // ... and resubscribe
       mqtt.subscribe(mqttsub);
     } else {
@@ -805,7 +804,7 @@ void setupOTA() { // init arduino ide ota library
   });
   ArduinoOTA.onEnd([]() {
     //Serial.println("done!");
-    if (useMQTT) mqtt.publish(mqttpub, "OTA complete, rebooting.");
+    if (useMQTT) mqttPrintStr("msg", "OTA complete, rebooting.");
     // ESP.restart();
     delay(1000);
   });
@@ -813,7 +812,7 @@ void setupOTA() { // init arduino ide ota library
     //Serial.print(".");
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    if (useMQTT) mqtt.publish(mqttpub, "OTA failed, try again!");
+    if (useMQTT) mqttPrintStr("msg", "OTA failed, try again!");
     //Serial.printf("Error[%u]: ", error);
     //if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
     //else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
@@ -842,19 +841,19 @@ void updateNTP() {
   getTime = false;
   time_t epoch = getNtptime();
   if (epoch == 0) {
-    if (useMQTT) mqtt.publish(mqttpub, "Time not set, NTP unavailable.");
+    if (useMQTT) mqttPrintStr("msg", "Time not set, NTP unavailable.");
   } else {
     setTime(epoch); // set software rtc to current time
-    if (useMQTT) mqtt.publish(mqttpub, "Time set from NTP server.");
+    if (useMQTT) mqttPrintStr("msg", "Time set from NTP server.");
   }
 }
 
 void doSpeedout() {
     sprintf(str,"fanspd=%u", fanSpeed);
-    if (useMQTT) mqtt.publish(mqttpub, str);
+    if (useMQTT) mqttPrintStr("msg", str);
     wsSend(str);
     sprintf(str,"fandir=%u", fanDirection);
-    if (useMQTT) mqtt.publish(mqttpub, str);
+    if (useMQTT) mqttPrintStr("msg", str);
     wsSend(str);
 }
 
@@ -954,28 +953,28 @@ void doRGB() { // send updated values to the first four channels of the pwm chip
 
   if (oldred!=red) {
     sprintf(str,"Update red from %u to %u", oldred,red);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
     oldred=red;
     rgbw.setpwm(_r, red);
   }
 
   if (oldgreen!=green) {
     sprintf(str,"Update green from %u to %u", oldgreen,green);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
     oldgreen=green;
     rgbw.setpwm(_g, green);
   }
 
   if (oldblue!=blue) {
     sprintf(str,"Update blue from %u to %u", oldblue,blue);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
     oldblue=blue;
     rgbw.setpwm(_b, blue);
   }
 
   if (oldwhite!=white) {
     sprintf(str,"Update white from %u to %u", oldwhite,white);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
     oldwhite=white;
     rgbw.setpwm(_w, white);
   }
@@ -1015,7 +1014,7 @@ void setupRGB() { // init pca9633 pwm chip
   _w = (rgbwChan&3); // fourth, mask off the 6 most significant bits
 
   sprintf(str,"RGBW channel assignments %u %u %u %u", _r, _g, _b, _w);
-  mqtt.publish(mqttpub, str);
+  mqttPrintStr("msg", str);
 
 }
 
@@ -1028,32 +1027,33 @@ void setupADS() {
 void setupSpeed() {
   speedAddr = sw1type;
   sprintf(str,"Fan speed function using i2c device %u.", speedAddr);
-  mqtt.publish(mqttpub, str);
+  mqttPrintStr("msg", str);
   speedControl(0,0); // direction 0, speed 0
 }
 
 void setupTstat() {
   dht.setup(DHTPIN, DHTesp::DHT11);
-
-  // latching relay power-on state is unknowable, so make sure it's set to off
-  digitalWrite(sw1, _OFF);
-  delay(100);
-  digitalWrite(sw2, _ON);
-  delay(100);
-  digitalWrite(sw2, _OFF);
-
   sprintf(str,"Thermostat function using DHT on GPIO %u.", DHTPIN);
-  mqtt.publish(mqttpub, str);
+  mqttPrintStr("msg", str);
+
+  if (coldBoot) { // latching relay power-on state is unknowable, so make sure it's set to off
+    digitalWrite(sw1, _OFF);
+    delay(100);
+    digitalWrite(sw2, _ON);
+    delay(100);
+    digitalWrite(sw2, _OFF);
+    mqttPrintStr("msg", "Thermostat re-initialized.");
+  }
 }
 
 void printConfig() { // print relevant config bits out to mqtt
-  if (timeOut) mqtt.publish(mqttpub, "Timestamp enabled.");
-  if (hasFan) mqtt.publish(mqttpub, "Fan control enabled.");
-  if (hasRGB) mqtt.publish(mqttpub, "RGBW control enabled.");
-  if (hasRSSI) mqtt.publish(mqttpub, "RSSI reporting enabled.");
-  if (hasVout) mqtt.publish(mqttpub, "Voltage reporting enabled.");
-  if (hasTout) mqtt.publish(mqttpub, "Temperature reporting enabled.");
-  if (hasTstat) mqtt.publish(mqttpub, "Thermostat function enabled.");
+  if (timeOut) mqttPrintStr("msg", "Timestamp enabled.");
+  if (hasFan) mqttPrintStr("msg", "Fan control enabled.");
+  if (hasRGB) mqttPrintStr("msg", "RGBW control enabled.");
+  if (hasRSSI) mqttPrintStr("msg", "RSSI reporting enabled.");
+  if (hasVout) mqttPrintStr("msg", "Voltage reporting enabled.");
+  if (hasTout) mqttPrintStr("msg", "Temperature reporting enabled.");
+  if (hasTstat) mqttPrintStr("msg", "Thermostat function enabled.");
   prtConfig=false;
 }
 
@@ -1132,7 +1132,7 @@ void doTstat() { // perform thermostat functions
 void printTstat() { // print thermostat configuration specifics
   prtTstat = false;
   if (hasTstat) {
-    mqtt.publish(mqttpub, "Sending thermostat report.");
+    mqttPrintStr("msg", "Sending thermostat report.");
 
     doTstat(); // update data
 
@@ -1144,7 +1144,7 @@ void printTstat() { // print thermostat configuration specifics
     mqttPrintInt("tstat/amb", tstatAmb);
     mqttPrintInt("tstat/rh", tstatRh);
   } else {
-    mqtt.publish(mqttpub, "Thermostat function disabled.");
+    mqttPrintStr("msg", "Thermostat function disabled.");
   }
 
 }
@@ -1161,6 +1161,7 @@ void setup() {
   else if (rebootMsg=="Hardware Watchdog") safeMode=true;
   else if (rebootMsg=="Unknown") safeMode=true;
   else if (rebootMsg=="Software Watchdog") safeMode=true;
+  else if (rebootMsg=="Deep-Sleep Wake") coldBoot=false;
 
   if (sw1>=0) {
     pinMode(sw1, OUTPUT);
@@ -1234,13 +1235,13 @@ void setup() {
   if (useMQTT) {
     String rebootReason = String("Last reboot cause was ") + rebootMsg;
     rebootReason.toCharArray(str, rebootReason.length()+1);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
   }
 
   // setup i2c if configured, basic sanity checking on configuration
   if (hasI2C && iotSDA>=0 && iotSCL>=0 && iotSDA!=iotSCL) {
     sprintf(str,"I2C enabled SDA=%u SCL=%u", iotSDA, iotSCL);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
 
     Wire.begin(iotSDA, iotSCL); // from api config file
 
@@ -1257,7 +1258,7 @@ void setup() {
 
   if (OWDAT>0) { // setup onewire if data line is using pin 1 or greater
     sprintf(str,"Onewire data GPIO %u", OWDAT);
-    mqtt.publish(mqttpub, str);
+    mqttPrintStr("msg", str);
     oneWire.begin(OWDAT);
     if (hasTout) {
       ds18b20 = DallasTemperature(&oneWire);
@@ -1265,14 +1266,14 @@ void setup() {
     }
     if (hasTpwr>0) {
       sprintf(str,"Onewire power GPIO %u", hasTpwr);
-      mqtt.publish(mqttpub, str);
+      mqttPrintStr("msg", str);
       pinMode(hasTpwr, OUTPUT); // onewire power pin as output
       digitalWrite(hasTpwr, LOW); // ow off
     }
   }
 
   // send config data to mqtt
-  printConfig();
+  if (coldBoot) printConfig();
 }
 
 void doVout() {
@@ -1299,7 +1300,7 @@ void doRGBout() {
   if(hasRGB) {
   	memset(str,0,sizeof(str));
   	sprintf(str, "red=%u,green=%u,blue=%u,white=%u", red, green, blue, white);
-  	mqtt.publish(mqttpub, str);
+  	mqttPrintStr("msg", str);
   	wsSend(str);
   }
   getRGB=false;
@@ -1375,7 +1376,7 @@ void runUpdate() { // test for http update flag, received url via mqtt
   doUpdate = false; // clear flag
   updateCnt = 0; // clear update counter
   if (useMQTT && !hasRGB) {
-    mqtt.publish(mqttpub, "Checking for updates");
+    mqttPrintStr("msg", "Checking for updates");
     mqtt.loop();
   }
   delay(50);
@@ -1420,7 +1421,7 @@ void loop() {
 
   if ((!skipSleep) && (sleepEn)) {
     sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
-    if (useMQTT) mqtt.publish(mqttpub, str);
+    if (useMQTT) mqttPrintStr("msg", str);
   }
 
   int cnt = 30;
@@ -1440,12 +1441,12 @@ void loop() {
 
     if (setPolo) {
       setPolo = false; // respond to an mqtt 'ping' of sorts
-      if (useMQTT) mqtt.publish(mqttpub, "Polo");
+      if (useMQTT) mqttPrintStr("msg", "Polo");
     }
 
     if (doReset) { // reboot on command
       if (useMQTT) {
-        mqtt.publish(mqttpub, "Rebooting!");
+        mqttPrintStr("msg", "Rebooting!");
         mqtt.loop();
       }
       delay(50);
@@ -1460,7 +1461,7 @@ void loop() {
     if ((sleepPeriod<30) || (sleepPeriod>4294)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than the counter will allow, roughly 1 hour
     sprintf(myChr,"Back in %d seconds", sleepPeriod);
     if (useMQTT) {
-      mqtt.publish(mqttpub, myChr);
+      mqttPrintStr("msg", myChr);
       mqtt.loop();
     }
 
