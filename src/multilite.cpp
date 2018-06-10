@@ -241,12 +241,12 @@ void mqttPrintInt(char* myTopic, int myNum) {
 
 void printIOTaddr() {
   sprintf(str,"Using IOT server %s.", iotSrv);
-  mqttPrintStr(mqttpub, str);  
+  mqttPrintStr(mqttpub, str);
 }
 
 void printMQTTaddr() {
   sprintf(str,"Using MQTT server %s.", mqttServer);
-  mqttPrintStr(mqttpub, str);  
+  mqttPrintStr(mqttpub, str);
 }
 
 char* cleanStr(const char* _str) {
@@ -614,7 +614,7 @@ void getConfig() { // start the process to get config from api server
   }
 }
 
-void handleMsg(char* cmdStr) { // handle commands from mqtt or websocket
+void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
@@ -710,7 +710,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
           break;
       case WStype_TEXT:
           payload[length] = '\0'; // null terminate
-          handleMsg((char *)payload);
+          handleCmd((char *)payload);
 
           break;
       case WStype_BIN:
@@ -725,15 +725,28 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 // receive mqtt messages
 void mqttCallBack(char* topic, byte* payload, unsigned int len) {
+  char mqttspd[200];
+  char mqttdir[200];
+  sprintf(mqttspd, "%s/fan/setspd", mqttbase);
+  sprintf(mqttdir, "%s/fan/setdir", mqttbase);
   skipSleep=true; // don't go to sleep if we receive mqtt message
   char tmp[200];
   strncpy(tmp, (char*)payload, len);
   tmp[len] = 0x00;
-  handleMsg(tmp);
+  if (strcmp(topic, mqttspd)==0) { // speed control message received
+    fanSpeed = atoi(tmp);
+    // mqttPrintStr(mqttpub, tmp);
+  }
+  else if (strcmp(topic, mqttdir)==0) { // direction control message received
+    fanDirection = atoi(tmp);
+    // mqttPrintStr(mqttpub, tmp);
+  }
+  else handleCmd(tmp);
 }
 
 // maintain connection to mqtt broker
 void mqttreconnect() {
+  char tmp[200];
   // Loop until we're reconnected
   if (!useMQTT) return; // bail out if mqtt is not configured
 
@@ -750,6 +763,14 @@ void mqttreconnect() {
       mqttPrintStr(mqttpub, "Hello, world!");
       // ... and resubscribe
       mqtt.subscribe(mqttsub);
+      if (hasSpeed) { // subscribe to speed control topic
+        sprintf(tmp, "%s/fan/setspd", mqttbase);
+        mqtt.subscribe(tmp);
+        mqttPrintStr(mqttpub, tmp);
+        sprintf(tmp, "%s/fan/setdir", mqttbase);
+        mqtt.subscribe(tmp);
+        mqttPrintStr(mqttpub, tmp);
+      }
     } else {
       // Wait before retrying
       delay(100);
@@ -861,20 +882,20 @@ void updateNTP() {
   getTime = false;
   time_t epoch = getNtptime();
   if (epoch == 0) {
-    mqttPrintStr(mqttpub, "Time not set, NTP unavailable.");
+    mqttPrintStr("time", "Time not set, NTP unavailable.");
   } else {
     setTime(epoch); // set software rtc to current time
-    mqttPrintStr(mqttpub, "Time set from NTP server.");
+    mqttPrintStr("time", "Time set from NTP server.");
   }
 }
 
 void doSpeedout() {
-    sprintf(str,"fanspd=%u", fanSpeed);
-    mqttPrintStr(mqttpub, str);
-    wsSend(str);
-    sprintf(str,"fandir=%u", fanDirection);
-    mqttPrintStr(mqttpub, str);
-    wsSend(str);
+    sprintf(str,"%u", fanSpeed);
+    mqttPrintStr("fan/speed", str);
+    wsSendStr("fanspd", str);
+    sprintf(str,"%u", fanDirection);
+    mqttPrintStr("fan/direction", str);
+    wsSendStr("fandir", str);
 }
 
 void wsData() { // send some websockets data if client is connected
@@ -894,7 +915,6 @@ void wsData() { // send some websockets data if client is connected
   }
 
   if (hasRSSI) wsSendStr("rssi",rssiChr); // send rssi info
-  if (hasSpeed) doSpeedout();
 
   if (hasTout) wsSend(tmpChr); // send temperature
 
@@ -959,8 +979,6 @@ void mqttData() { // send mqtt messages as required
     sprintf(str,"%d", raw2);
     if (rawadc) mqttPrintStr("volts/raw", str);
   }
-
-  if (hasSpeed) doSpeedout();
 }
 
 void doRGB() { // send updated values to the first four channels of the pwm chip
@@ -1336,6 +1354,7 @@ void doRSSI() {
 
 void doSpeed() {
   speedControl(fanSpeed, fanDirection);
+  doSpeedout();
 }
 
 void doIout() { // enable current reporting if module is so equipped
