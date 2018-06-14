@@ -21,8 +21,8 @@
 #include <DHTesp.h>
 
 // uncomment for ac switch module, leave comment for dc switch module
-// #define _ACMULTI true
-#define _TRAILER true
+#define _ACMULTI true
+// #define _TRAILER true
 // owdat is set by json config now!
 
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
@@ -639,7 +639,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "iotconfig")==0) {
     iotSrv = cmdVal;
     int theResult = requestConfig(true);
-    if (theResult > -1) doReset();
+    if (theResult > -1) setReset=true;
   }
   else {
     uint8_t i = atoi(cmdVal);
