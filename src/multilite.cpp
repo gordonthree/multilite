@@ -1463,7 +1463,7 @@ void loop() {
   if (getRGB) doRGBout();
   if (hasSpeed) doSpeed();
 
-  if ( (doUpdate) || (updateCnt>= 60 / ((updateRate * 20) / 1000) ) ) runUpdate(); // check for config update as requested or every 60 loops
+  if ( (doUpdate) || (updateCnt>= ( 60 / ( (updateRate * 20) / 1000) ) ) ) runUpdate(); // check for config update as requested or every 60 loops
 
   if (wsConcount>0) wsData();
   if (useMQTT) mqttData(); // regular update for non RGB controllers
@@ -1494,7 +1494,7 @@ void loop() {
 
     if (setReset) doReset(); // execute reboot command
 
-    if (!hasRGB) delay(20); // don't delay for rgb controller
+    // if (!hasRGB) delay(20); // don't delay for rgb controller
   }
 
   if ((!skipSleep) && (sleepEn)) {
