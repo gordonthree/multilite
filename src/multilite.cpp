@@ -21,8 +21,8 @@
 #include <DHTesp.h>
 
 // uncomment for ac switch module, leave comment for dc switch module
-#define _ACMULTI true
-// #define _TRAILER true
+// #define _ACMULTI true
+#define _TRAILER true
 // owdat is set by json config now!
 
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
@@ -240,10 +240,14 @@ void mqttPrintInt(char* myTopic, int myNum) {
 }
 
 void printIOTaddr() {
-  sprintf(str,"Using IOT server %s.", iotSrv);
+  sprintf(str,"Using IOT server %s:%u", iotSrv, iotPort);
   mqttPrintStr(mqttpub, str);
 }
 
+void printIOTurl() {
+  sprintf(str,"FW Update URL http://%s:%u%s", iotSrv, iotPort, theURL);
+  mqttPrintStr(mqttpub, str);
+}
 void printMQTTaddr() {
   sprintf(str,"Using MQTT server %s.", mqttServer);
   mqttPrintStr(mqttpub, str);
@@ -301,6 +305,8 @@ void i2c_scan() {
 }
 
 void httpUpdater() {
+  printIOTurl();
+
   t_httpUpdate_return ret = ESPhttpUpdate.update(iotSrv, iotPort, theURL, fwversion);
 
   switch(ret) {
@@ -1463,7 +1469,7 @@ void loop() {
   if (getRGB) doRGBout();
   if (hasSpeed) doSpeed();
 
-  if ( (doUpdate) || (updateCnt>= ( 60 / ( (updateRate * 20) / 1000) ) ) ) runUpdate(); // check for config update as requested or every 60 loops
+  if ((doUpdate) || (updateCnt>= ( 60 / ( (updateRate * 20) / 1000) ) ) ) runUpdate(); // check for config update as requested or every 60 loops
 
   if (wsConcount>0) wsData();
   if (useMQTT) mqttData(); // regular update for non RGB controllers
@@ -1478,23 +1484,23 @@ void loop() {
   int cnt = 30;
   if (updateRate>30) cnt=updateRate;
   while(cnt--) {
-    ArduinoOTA.handle();
-    if (useMQTT) mqtt.loop();
+    ArduinoOTA.handle(); // handle OTA updates
+    if (useMQTT) mqtt.loop(); // keep mqtt alive if enabled
 
-    webSocket.loop();
+    webSocket.loop(); // keep websocket alive if enabled
 
     if (prtTstat) printTstat(); // update thermostat if commanded
     if (getTime) updateNTP(); // update time if requested by command
     if (scanI2C) i2c_scan(); // respond to i2c scan command
 
-    if (hasRGB) doRGB(); // rgb updates as fast as possible
+    if (hasRGB) doRGB(); // rgb updates
     if (rgbTest) testRGB(); // respond to testrgb command
 
     if (setPolo) doPolo(); // respond to ping
 
     if (setReset) doReset(); // execute reboot command
 
-    // if (!hasRGB) delay(20); // don't delay for rgb controller
+    delay(20);
   }
 
   if ((!skipSleep) && (sleepEn)) {
