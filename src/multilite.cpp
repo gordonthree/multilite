@@ -39,8 +39,10 @@
 #endif
 
 #ifdef _TRAILER // iot node for rv application
+char ntpServerName[32] = "192.168.10.30";
 char* iotSrv = "192.168.10.30"; // automation api server name
 #else // iot node for home application
+char* ntpServerName[32] = "us.pool.ntp.org";
 char* iotSrv = "192.168.2.30"; // automation api server name
 #endif
 
@@ -64,6 +66,7 @@ char amps1Chr[10];
 char adcChr[10];
 int16_t adcVal[4];
 uint8_t adcEnable = 0;
+uint8_t wifiDown = 0;
 unsigned char wsConcount=0;
 int raw0=0, raw1=0, raw2=0;
 char tmpChr[10];
@@ -119,6 +122,7 @@ bool useMQTT = false; // flag for mqtt available
 bool setPolo = false;
 bool doUpdate = false;
 bool getRGB = false;
+bool prtLog = false;
 bool skipSleep = false; // skip next sleep cycle
 bool sleepEn = false; // disable sleep entirely
 bool useGetvcc = false; // use internal divider network
@@ -143,6 +147,7 @@ bool prtConfig = false; // flag to request config print via mqtt
 bool timeOut = false; // flag to report time via mqtt
 bool hasADC = false; // flag for ads1015 support
 bool coldBoot = true; // assume every boot is cold unless told otherwise
+bool rmLog = false; // flag to remove spiffs log file
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 
@@ -163,7 +168,7 @@ WiFiUDP udp;
 
 /* Don't hardwire the IP address or we won't get the benefits of the pool.
  *  Lookup the IP address for the host name instead */
-const char* ntpServerName = "us.pool.ntp.org";
+
 EasyNTPClient ntpClient(udp, ntpServerName);
 
 void i2c_wordwrite(uint8_t address, uint8_t cmd, uint16_t theWord) {
@@ -248,8 +253,14 @@ void printIOTurl() {
   sprintf(str,"FW Update URL http://%s:%u%s", iotSrv, iotPort, theURL);
   mqttPrintStr(mqttpub, str);
 }
+
 void printMQTTaddr() {
   sprintf(str,"Using MQTT server %s.", mqttServer);
+  mqttPrintStr(mqttpub, str);
+}
+
+void printNTPaddr() {
+  sprintf(str,"Using NTP server %s.", ntpServerName);
   mqttPrintStr(mqttpub, str);
 }
 
@@ -304,23 +315,85 @@ void i2c_scan() {
   mqttPrintStr(mqttpub, "I2C scan complete.");
 }
 
+void writeLog(const char* _event, const char* _message) {
+  time_t ts = now();
+
+  File logFile = SPIFFS.open("log.csv","a");
+  if (!logFile) {
+    return; // oh well we tried
+  }
+
+  // record something here
+  if (ts<10000000) {
+    logFile.print("time not set");
+  } else {
+    logFile.print(ts);
+  }
+  logFile.print(',');
+  logFile.print(_event); logFile.print(',');
+  logFile.println(_message);
+  logFile.close();
+}
+
+void readLog() {
+  const uint8_t bSize=100;
+  const char endLine = '\n';
+  char logLine[bSize];
+  char tempStr[bSize+8];
+  prtLog = false;
+
+  memset(logLine,0,sizeof(logLine));
+  memset(tempStr,0,sizeof(tempStr));
+
+  mqttPrintStr("log", "Attempting to open log file");
+  File logFile = SPIFFS.open("log.csv","r");
+  if (!logFile) {
+    mqttPrintStr("log", "Failed to open log file");
+    return; // oh well we tried
+  }
+  mqttPrintStr("log", "Log file opened");
+  uint8_t c = 0;
+  while (logFile.available()) {
+    int readBytes = logFile.readBytesUntil(endLine, logLine, bSize);
+    sprintf(tempStr,"line %u: %s\0", c, logLine);
+    mqttPrintStr("log", tempStr);
+    c++;
+  }
+  mqttPrintStr("log", "End of log");
+  logFile.close();
+}
+
+void deleteLog() {
+  rmLog = false;
+  if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
+  writeLog("system","log file removed");
+}
+
 void httpUpdater() {
   printIOTurl();
-
+  mqttPrintStr("http_update", "checking");
+  //writeLog("http_update", "checking");
+  char tempStr[20];
+  memset(tempStr,0,sizeof(tempStr));
   t_httpUpdate_return ret = ESPhttpUpdate.update(iotSrv, iotPort, theURL, fwversion);
+  int err = ESPhttpUpdate.getLastError();
+  sprintf(tempStr,"error %d\0",err);
 
   switch(ret) {
       case HTTP_UPDATE_FAILED:
-        mqttPrintStr(mqttpub, "FW update failed");
+        //writeLog("http_update", tempStr);
+        mqttPrintStr("http_update", tempStr);
         delay(10);
         break;
 
       case HTTP_UPDATE_NO_UPDATES:
-        mqttPrintStr(mqttpub, "No FW update available");
+        //writeLog("http_update","no update available");
+        mqttPrintStr("http_update", "No update available");
         delay(10);
         break;
 
       case HTTP_UPDATE_OK:
+        writeLog("http_update","complete");
         break;
   }
 }
@@ -393,6 +466,7 @@ int loadConfig(bool setFSver) {
   if (json.containsKey("sw3label"))   strcpy(sw3label, json["sw3label"]);
   if (json.containsKey("sw4label"))   strcpy(sw4label, json["sw4label"]);
   if (json.containsKey("mqttserver")) strcpy(mqttServer, json["mqttserver"]);
+  if (json.containsKey("ntpserver")) strcpy(ntpServerName, json["ntpserver"]);
   if (json.containsKey("vccdivsor"))  vccDivisor = atof((const char*)json["vccdivsor"]);
   if (json.containsKey("mvpera"))     mvPerA = atof((const char*)json["mvpera"]);
 
@@ -480,6 +554,14 @@ int loadConfig(bool setFSver) {
   }
 
   return ver;
+}
+
+void doReset() { // reboot on command
+      mqttPrintStr(mqttpub, "Rebooting!");
+      delay(50);
+      writeLog("reboot","user request");
+      ESP.reset();
+      delay(5000); // allow time for reboot
 }
 
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
@@ -634,6 +716,8 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "reboot")==0) setReset = true; // reboot controller
   else if (strcmp(cmdTxt, "gettime")==0) getTime = true; // print internal timestamp
   else if (strcmp(cmdTxt, "prtconfig")==0) prtConfig = true; // print running config
+  else if (strcmp(cmdTxt, "prtlog")==0) prtLog = true; // print running config
+  else if (strcmp(cmdTxt, "rmlog")==0) rmLog = true; // print running config
   else if (strcmp(cmdTxt, "fanspd")==0) fanSpeed = atoi(cmdVal); // set fan speed
   else if (strcmp(cmdTxt, "fandir")==0) fanDirection = atoi(cmdVal); // set fan direction
   else if (strcmp(cmdTxt, "settemp")==0) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
@@ -642,7 +726,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "green")==0) green = atoi(cmdVal);
   else if (strcmp(cmdTxt, "blue")==0) blue = atoi(cmdVal);
   else if (strcmp(cmdTxt, "white")==0) white = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "iotconfig")==0) {
+  else if (strcmp(cmdTxt, "iotsrv")==0) {
     iotSrv = cmdVal;
     int theResult = requestConfig(true);
     if (theResult > -1) setReset=true;
@@ -757,16 +841,16 @@ void mqttCallBack(char* topic, byte* payload, unsigned int len) {
 
 // maintain connection to mqtt broker
 void mqttreconnect() {
-  char tmp[200];
-  // Loop until we're reconnected
   if (!useMQTT) return; // bail out if mqtt is not configured
+  char tmp[200];
 
   int retry = 0;
   if (mqttFail>=100) { // repeated mqtt failure could mean network trouble, reboot esp
-    ESP.reset();
-    delay(5000); // give esp time to reset
+    writeLog("reboot","mqtt disconnected");
+    doReset();
   }
 
+  // Loop until we're reconnected
   while (!mqtt.connected()) {
     // Attempt to connect
     if (mqtt.connect(nodename)) {
@@ -786,7 +870,7 @@ void mqttreconnect() {
       // Wait before retrying
       delay(100);
     }
-    if (retry++ > 4) { // try five times, return to loop
+    if (retry++ > 4) { // try five times, return to main loop
       mqttFail++;
       return;
     }
@@ -843,28 +927,19 @@ void doADC() { // figure out which ADC to read and do it
   printADC(); // display results
 }
 
-void doReset() { // reboot on command
-      mqttPrintStr(mqttpub, "Rebooting!");
-      delay(50);
-      ESP.reset();
-      delay(5000); // allow time for reboot
-}
-
 void setupOTA() { // init arduino ide ota library
   ArduinoOTA.onStart([]() {
-    //Serial.print("OTA Update");
+    writeLog("ota", "start");
   });
   ArduinoOTA.onEnd([]() {
-    //Serial.println("done!");
-    mqttPrintStr(mqttpub, "OTA complete, rebooting.");
-    // ESP.restart();
-    delay(1000);
+    writeLog("ota", "complete");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     //Serial.print(".");
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    mqttPrintStr(mqttpub, "OTA failed, try again!");
+    writeLog("ota", "failure");
+
     //Serial.printf("Error[%u]: ", error);
     //if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
     //else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
@@ -927,7 +1002,7 @@ void wsData() { // send some websockets data if client is connected
 
   if (hasRSSI) wsSendStr("rssi",rssiChr); // send rssi info
 
-  if (hasTout) wsSend(tmpChr); // send temperature
+  if (hasTout) wsSendStr("temp",tmpChr); // send temperature
 
   if (hasIout) { // send readings from ADC
     sprintf(str,"raw0=%d", raw0);
@@ -1077,7 +1152,9 @@ void setupSpeed() {
   speedAddr = sw1type;
   sprintf(str,"Fan speed function using i2c device %u.", speedAddr);
   mqttPrintStr(mqttpub, str);
-  speedControl(0,0); // direction 0, speed 0
+  if (coldBoot) {
+    speedControl(0,0); // direction 0, speed 0
+  }
 }
 
 void setupTstat() {
@@ -1103,6 +1180,10 @@ void printConfig() { // print relevant config bits out to mqtt
   if (hasVout) mqttPrintStr(mqttpub, "Voltage reporting enabled.");
   if (hasTout) mqttPrintStr(mqttpub, "Temperature reporting enabled.");
   if (hasTstat) mqttPrintStr(mqttpub, "Thermostat function enabled.");
+  printIOTaddr();
+  printIOTurl();
+  printMQTTaddr();
+  printNTPaddr();
   prtConfig=false;
 }
 
@@ -1246,6 +1327,7 @@ void setup() {
   }
 
   if (wifiMulti.run() != WL_CONNECTED ) { // still not connected? reboot!
+    writeLog("reboot","boot no wifi");
     ESP.reset();
     delay(5000);
   }
@@ -1281,9 +1363,10 @@ void setup() {
   setupMQTT();
 
   if (useMQTT) {
-    String rebootReason = String("Last reboot cause was ") + rebootMsg;
-    rebootReason.toCharArray(str, rebootReason.length()+1);
-    mqttPrintStr(mqttpub, str);
+    // String rebootReason = String("Last reboot cause was ") + rebootMsg;
+    // rebootReason.toCharArray(str, rebootReason.length()+1);
+    rebootMsg.toCharArray(str, rebootMsg.length()+1);
+    mqttPrintStr("reboot/reason", str);
   }
 
   // setup i2c if configured, basic sanity checking on configuration
@@ -1323,9 +1406,9 @@ void setup() {
   // send config data to mqtt
   if (coldBoot) {
     printConfig();
-    printIOTaddr();
   }
-}
+  writeLog("system", "online");
+} // end of setup()
 
 void doVout() {
   int vBat=vccOffset;
@@ -1448,13 +1531,17 @@ void loop() {
       ArduinoOTA.handle();
       delay(100);
     }
+    writeLog("reboot","safemode");
     ESP.reset(); // restart, try again
     delay(5000); // give esp time to reboot
   }
 
   if(wifiMulti.run() != WL_CONNECTED) { // reboot if wifi connection drops
+    if (wifiDown++>100) { // hmm, something wrong with the wifi?
+      writeLog("reboot","wifi down");
       ESP.reset();
       delay(5000);
+    }
   }
 
   if (!mqtt.connected()) {
@@ -1474,6 +1561,8 @@ void loop() {
   if (wsConcount>0) wsData();
   if (useMQTT) mqttData(); // regular update for non RGB controllers
   if (prtConfig) printConfig(); // config print was requested
+  if (prtLog) readLog(); // log dump requested
+  if (rmLog) deleteLog(); // Remove log file
   if (hasADC) doADC();
 
   if ((!skipSleep) && (sleepEn)) {
