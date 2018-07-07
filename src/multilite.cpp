@@ -22,7 +22,7 @@
 
 // uncomment for ac switch module, leave comment for dc switch module
 // #define _ACMULTI true
-#define _TRAILER true
+// #define _TRAILER true
 // owdat is set by json config now!
 
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
@@ -42,7 +42,7 @@
 char ntpServerName[32] = "192.168.10.30";
 char* iotSrv = "192.168.10.30"; // automation api server name
 #else // iot node for home application
-char* ntpServerName[32] = "us.pool.ntp.org";
+char ntpServerName[32] = "us.pool.ntp.org";
 char* iotSrv = "192.168.2.30"; // automation api server name
 #endif
 
@@ -148,6 +148,7 @@ bool timeOut = false; // flag to report time via mqtt
 bool hasADC = false; // flag for ads1015 support
 bool coldBoot = true; // assume every boot is cold unless told otherwise
 bool rmLog = false; // flag to remove spiffs log file
+bool rmConfig = false; // flag to remove spiffs config file
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 
@@ -335,6 +336,18 @@ void writeLog(const char* _event, const char* _message) {
   logFile.close();
 }
 
+void deleteLog() {
+  rmLog = false;
+  if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
+  writeLog("system","log file removed");
+}
+
+void deleteConfig() {
+  rmConfig = false;
+  if (SPIFFS.remove("/iot.json")) mqttPrintStr("config", "Config file removed");
+  writeLog("system","config file removed");
+}
+
 void readLog() {
   const uint8_t bSize=100;
   const char endLine = '\n';
@@ -361,13 +374,9 @@ void readLog() {
   }
   mqttPrintStr("log", "End of log");
   logFile.close();
+  deleteLog();
 }
 
-void deleteLog() {
-  rmLog = false;
-  if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
-  writeLog("system","log file removed");
-}
 
 void httpUpdater() {
   printIOTurl();
@@ -718,6 +727,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "prtconfig")==0) prtConfig = true; // print running config
   else if (strcmp(cmdTxt, "prtlog")==0) prtLog = true; // print running config
   else if (strcmp(cmdTxt, "rmlog")==0) rmLog = true; // print running config
+  else if (strcmp(cmdTxt, "rmconfig")==0) rmConfig = true; // print running config
   else if (strcmp(cmdTxt, "fanspd")==0) fanSpeed = atoi(cmdVal); // set fan speed
   else if (strcmp(cmdTxt, "fandir")==0) fanDirection = atoi(cmdVal); // set fan direction
   else if (strcmp(cmdTxt, "settemp")==0) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
@@ -1327,7 +1337,7 @@ void setup() {
   }
 
   if (wifiMulti.run() != WL_CONNECTED ) { // still not connected? reboot!
-    writeLog("reboot","boot no wifi");
+    writeLog("reboot","no wifi at boot");
     ESP.reset();
     delay(5000);
   }
@@ -1563,6 +1573,7 @@ void loop() {
   if (prtConfig) printConfig(); // config print was requested
   if (prtLog) readLog(); // log dump requested
   if (rmLog) deleteLog(); // Remove log file
+  if (rmConfig) deleteConfig(); // Remove IOT config file
   if (hasADC) doADC();
 
   if ((!skipSleep) && (sleepEn)) {
