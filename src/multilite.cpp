@@ -10,7 +10,6 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
@@ -101,6 +100,7 @@ uint8_t tstatMode=0, tstatOper=0; // default thermostat off
 int tstatAmb = 0; // ambient temperature
 uint8_t tstatRh = 0; // rel humidity
 time_t oldEpoch = 0;
+time_t bootTime = 0;
 uint8_t red=0,green=0,blue=0,white=0;
 uint8_t oldred=0,oldgreen=0,oldblue=0,oldwhite=0;
 uint8_t rgbwChan=57; // b00111001 four nibbles to map RGBW to pwm channels
@@ -159,7 +159,6 @@ PubSubClient mqtt(espClient);
 OneWire oneWire;
 DallasTemperature ds18b20 = NULL;
 WebSocketsServer webSocket = WebSocketsServer(81);
-ESP8266WiFiMulti wifiMulti;
 PCA9633 rgbw; // instance of pca9633 library
 DHTesp dht; // instance of DHT library
 
@@ -240,7 +239,7 @@ void mqttPrintStr(char* _topic, char* myStr) {
 
 void mqttPrintInt(char* myTopic, int myNum) {
   char myStr[8];
-  sprintf(myStr, "%u", myNum);
+  sprintf(myStr, "%d", myNum);
   mqttPrintStr(myTopic, myStr);
 }
 
@@ -335,6 +334,12 @@ void writeLog(const char* _event, const char* _message) {
   logFile.close();
 }
 
+void deleteLog() {
+  rmLog = false;
+  if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
+  writeLog("system","log file removed");
+}
+
 void readLog() {
   const uint8_t bSize=100;
   const char endLine = '\n';
@@ -361,13 +366,10 @@ void readLog() {
   }
   mqttPrintStr("log", "End of log");
   logFile.close();
+  deleteLog();
 }
 
-void deleteLog() {
-  rmLog = false;
-  if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
-  writeLog("system","log file removed");
-}
+
 
 void httpUpdater() {
   printIOTurl();
@@ -418,7 +420,7 @@ void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
 
   if (speedAddr>0) {
     i2c_write(speedAddr, 0x03, fanDirection);
-    delay(10);
+    delay(50);
     i2c_write(speedAddr, 0x00, fanSpeed);
   }
 }
@@ -967,11 +969,12 @@ time_t getNtptime() {
 void updateNTP() {
   getTime = false;
   time_t epoch = getNtptime();
-  if (epoch == 0) {
-    mqttPrintStr("time", "Time not set, NTP unavailable.");
-  } else {
+  if (epoch > 10000000) {
+    if (bootTime == 0) bootTime = epoch; // record the time of boot
     setTime(epoch); // set software rtc to current time
     mqttPrintStr("time", "Time set from NTP server.");
+  } else {
+    mqttPrintStr("time", "Time not set, NTP unavailable.");
   }
 }
 
@@ -1000,8 +1003,6 @@ void wsData() { // send some websockets data if client is connected
     if (rawadc) wsSend(adcChr);
   }
 
-  if (hasRSSI) wsSendStr("rssi",rssiChr); // send rssi info
-
   if (hasTout) wsSendStr("temp",tmpChr); // send temperature
 
   if (hasIout) { // send readings from ADC
@@ -1028,6 +1029,7 @@ void mqttSendTime(time_t _time) {
   memset(str,0,sizeof(str));
   sprintf(str,"%ld", _time);
   mqttPrintStr("time", str);
+  mqttPrintInt("uptime", _time - bootTime);
   oldEpoch = _time;
 }
 
@@ -1315,19 +1317,19 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  wifiMulti.addAP("DXtrailer", "2317239216");
+  WiFi.begin("DXtrailer", "2317239216");
 #else
-  wifiMulti.addAP("Tell my WiFi I love her", "2317239216");
+  WiFi.begin("Tell my WiFi I love her", "2317239216");
 #endif
 
   int wifiConnect = 240;
-  while ((wifiMulti.run() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
+  while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
     // connecting to wifi
     delay(1000);
   }
 
-  if (wifiMulti.run() != WL_CONNECTED ) { // still not connected? reboot!
-    writeLog("reboot","boot no wifi");
+  if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
+    writeLog("reboot","no wifi at boot");
     ESP.reset();
     delay(5000);
   }
@@ -1442,8 +1444,7 @@ void doRGBout() {
 
 void doRSSI() {
   int rssi = WiFi.RSSI();
-  memset(rssiChr,0,sizeof(rssiChr));
-  sprintf(rssiChr, "%d", rssi);
+  mqttPrintInt("rssi", rssi);
 }
 
 void doSpeed() {
@@ -1510,11 +1511,7 @@ void doIout() { // enable current reporting if module is so equipped
 void runUpdate() { // test for http update flag, received url via mqtt
   doUpdate = false; // clear flag
   updateCnt = 0; // clear update counter
-  if (useMQTT && !hasRGB) {
-    mqttPrintStr(mqttpub, "Checking for updates");
-    mqtt.loop();
-  }
-  delay(50);
+  mqttPrintStr(mqttpub, "Checking for updates");
   getConfig();
   httpUpdater();
 }
@@ -1525,85 +1522,14 @@ void doPolo() {
 }
 
 void loop() {
-  if (safeMode) { // safeMode engaged, enter blocking loop wait for an OTA update
-    int safeDelay=30000; // five minutes in 100ms counts
-    while (safeDelay--) {
-      ArduinoOTA.handle();
-      delay(100);
-    }
-    writeLog("reboot","safemode");
-    ESP.reset(); // restart, try again
-    delay(5000); // give esp time to reboot
-  }
-
-  if(wifiMulti.run() != WL_CONNECTED) { // reboot if wifi connection drops
-    if (wifiDown++>100) { // hmm, something wrong with the wifi?
-      writeLog("reboot","wifi down");
-      ESP.reset();
-      delay(5000);
-    }
-  }
-
-  if (!mqtt.connected()) {
-    mqttreconnect(); // check mqqt status
-  }
-
-  if (hasTstat) doTstat();
-  if (hasRSSI) doRSSI();
-  if (hasTout) doTout();
-  if (hasVout) doVout();
-  if (hasIout) doIout();
-  if (getRGB) doRGBout();
-  if (hasSpeed) doSpeed();
-
-  if ((doUpdate) || (updateCnt>= ( 60 / ( (updateRate * 20) / 1000) ) ) ) runUpdate(); // check for config update as requested or every 60 loops
-
-  if (wsConcount>0) wsData();
-  if (useMQTT) mqttData(); // regular update for non RGB controllers
-  if (prtConfig) printConfig(); // config print was requested
-  if (prtLog) readLog(); // log dump requested
-  if (rmLog) deleteLog(); // Remove log file
-  if (hasADC) doADC();
-
-  if ((!skipSleep) && (sleepEn)) {
-    sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
-    mqttPrintStr(mqttpub, str);
-  }
+  doRSSI();
+  if (timeStatus() == timeSet) mqttSendTime(now());
 
   int cnt = 30;
-  if (updateRate>30) cnt=updateRate;
   while(cnt--) {
     ArduinoOTA.handle(); // handle OTA updates
     if (useMQTT) mqtt.loop(); // keep mqtt alive if enabled
 
-    webSocket.loop(); // keep websocket alive if enabled
-
-    if (prtTstat) printTstat(); // update thermostat if commanded
-    if (getTime) updateNTP(); // update time if requested by command
-    if (scanI2C) i2c_scan(); // respond to i2c scan command
-
-    if (hasRGB) doRGB(); // rgb updates
-    if (rgbTest) testRGB(); // respond to testrgb command
-
-    if (setPolo) doPolo(); // respond to ping
-
-    if (setReset) doReset(); // execute reboot command
-
-    delay(20);
+    delay(200);
   }
-
-  if ((!skipSleep) && (sleepEn)) {
-    if ((sleepPeriod<30) || (sleepPeriod>4294)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than the counter will allow, roughly 1 hour
-    sprintf(myChr,"Back in %d seconds.", sleepPeriod);
-    if (useMQTT) {
-      mqttPrintStr(mqttpub, myChr);
-      mqtt.loop();
-    }
-
-    ESP.deepSleep(1000000 * sleepPeriod, WAKE_RF_DEFAULT); // sleep for 15 min
-    delay(5000); // give esp time to fall asleep
-
-  }
-  skipSleep = false;
-  updateCnt++;
 }
