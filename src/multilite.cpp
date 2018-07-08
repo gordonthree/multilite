@@ -334,7 +334,7 @@ void deleteConfig() {
 }
 
 void readLog() {
-  const uint8_t bSize=100;
+  const uint8_t bSize=150;
   const char endLine = '\n';
   char logLine[bSize];
   char tempStr[bSize+8];
@@ -367,11 +367,14 @@ void httpUpdater() {
   printIOTurl();
   mqttPrintStr("http_update", "Checking...");
   //writeLog("http_update", "checking");
-  char tempStr[20];
+  char tempStr[120];
+  char errStr[100];
   memset(tempStr,0,sizeof(tempStr));
   t_httpUpdate_return ret = ESPhttpUpdate.update(iotSrv, iotPort, theURL, fwversion);
-  int err = ESPhttpUpdate.getLastError();
-  sprintf(tempStr,"error %d\0",err);
+  int errCode = ESPhttpUpdate.getLastError(); // get error code
+  String errTxt = ESPhttpUpdate.getLastErrorString(); // get error message as Arduino string
+  errTxt.toCharArray(errStr, errTxt.length()+1); // copy error message to char array
+  sprintf(tempStr,"error %d:%s\0", errCode, errStr);
 
   switch(ret) {
       case HTTP_UPDATE_FAILED:
