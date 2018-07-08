@@ -251,8 +251,8 @@ void printIOTaddr() {
 }
 
 void printIOTurl() {
-  sprintf(str,"FW Update URL http://%s:%u%s", iotSrv, iotPort, theURL);
-  mqttPrintStr(mqttpub, str);
+  sprintf(str,"URL http://%s:%u%s", iotSrv, iotPort, theURL);
+  mqttPrintStr("http_update", str);
 }
 
 void printMQTTaddr() {
@@ -380,7 +380,7 @@ void readLog() {
 
 void httpUpdater() {
   printIOTurl();
-  mqttPrintStr("http_update", "checking");
+  mqttPrintStr("http_update", "Checking...");
   //writeLog("http_update", "checking");
   char tempStr[20];
   memset(tempStr,0,sizeof(tempStr));
