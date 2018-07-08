@@ -260,20 +260,7 @@ void printMQTTaddr() {
 
 void printNTPaddr() {
   sprintf(str,"Using NTP server %s.", ntpServerName);
-  mqttPrintStr(mqttpub, str);
-}
-
-char* cleanStr(const char* _str) {
-  int x=0, i=0;
-  char c;
-  memset(str,0,sizeof(str)); // zero out array
-
-  while (((c = _str[i++]) != '\0') && (x<59)) { // read array until we hit a null
-    if (isPrintable(c)) str[x++] = c; // exclude character that are not alphaNumeric
-  }
-  str[x] = '\0'; // null terminate
-
-  return str; // return printable results
+  mqttPrintStr("time", str);
 }
 
 void wsSend(const char* _str) {
@@ -362,7 +349,7 @@ void readLog() {
     mqttPrintStr("log", "Failed to open log file");
     return; // oh well we tried
   }
-  mqttPrintStr("log", "Log file opened");
+  // mqttPrintStr("log", "Log file opened");
   uint8_t c = 0;
   while (logFile.available()) {
     int readBytes = logFile.readBytesUntil(endLine, logLine, bSize);
@@ -388,7 +375,7 @@ void httpUpdater() {
 
   switch(ret) {
       case HTTP_UPDATE_FAILED:
-        //writeLog("http_update", tempStr);
+        writeLog("http_update", tempStr);
         mqttPrintStr("http_update", tempStr);
         delay(10);
         break;
@@ -1593,7 +1580,7 @@ void loop() {
     delay(5000); // give esp time to fall asleep
 
   }
-  
+
   skipSleep = false;
   updateCnt++;
 }
