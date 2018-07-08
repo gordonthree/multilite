@@ -370,7 +370,9 @@ void httpUpdater() {
   char tempStr[120];
   char errStr[100];
   memset(tempStr,0,sizeof(tempStr));
+
   t_httpUpdate_return ret = ESPhttpUpdate.update(iotSrv, iotPort, theURL, fwversion);
+ 
   int errCode = ESPhttpUpdate.getLastError(); // get error code
   String errTxt = ESPhttpUpdate.getLastErrorString(); // get error message as Arduino string
   errTxt.toCharArray(errStr, errTxt.length()+1); // copy error message to char array
@@ -404,6 +406,12 @@ void wsSendTime(const char* msg, time_t mytime) {
 void wsSendStr(const char* label, const char* msg) {
   memset(str,0,sizeof(str));
   sprintf(str, "%s=%s", label, msg);
+  wsSend(str);
+}
+
+void wsSendInt(const char* label, int num) {
+  memset(str,0,sizeof(str));
+  sprintf(str, "%s=%d", label, num);
   wsSend(str);
 }
 
@@ -912,8 +920,7 @@ void printADC() { // print adc values to mqtt
   for (int x=0; x<4; x++) {
     if (adcEnable&1<<x) {
       sprintf(str,"%s/adc%u",mqttbase,x); // example home/solar1/adc0
-      sprintf(myChr,"%d", adcVal[x]);
-      mqtt.publish(str, myChr);
+      mqttPrintInt(str, adcVal[x]);
     }
   }
 }
@@ -965,7 +972,7 @@ time_t getNtptime() {
 void updateNTP() {
   getTime = false;
   time_t epoch = getNtptime();
-  if (epoch == 0) {
+  if (epoch < 1000000000) {
     mqttPrintStr("time", "Time not set, NTP unavailable.");
   } else {
     setTime(epoch); // set software rtc to current time
@@ -974,12 +981,11 @@ void updateNTP() {
 }
 
 void doSpeedout() {
-    sprintf(str,"%u", fanSpeed);
-    mqttPrintStr("fan/speed", str);
-    wsSendStr("fanspd", str);
-    sprintf(str,"%u", fanDirection);
-    mqttPrintStr("fan/direction", str);
-    wsSendStr("fandir", str);
+    mqttPrintInt("fan/speed",fanSpeed);
+    mqttPrintInt("fan/direction",fanDirection);
+
+    wsSendInt("fanspd", fanSpeed);
+    wsSendInt("fandir", fanDirection);
 }
 
 void wsData() { // send some websockets data if client is connected
@@ -1003,19 +1009,14 @@ void wsData() { // send some websockets data if client is connected
   if (hasTout) wsSendStr("temp",tmpChr); // send temperature
 
   if (hasIout) { // send readings from ADC
-    sprintf(str,"raw0=%d", raw0);
     wsSend(amps0Chr);
-    if (rawadc) wsSend(str);
-    memset(str,0,sizeof(str));
-    sprintf(str,"raw1=%d", raw1);
+    if (rawadc) wsSendInt("raw0", raw0);
+
     wsSend(amps1Chr);
-    if (rawadc) wsSend(str);
-    memset(str,0,sizeof(str));
-    sprintf(str,"raw2=%d", raw2);
-    // wsSend(voltsChr);
+    if (rawadc) wsSendInt("raw1", raw1);
+
     wsSendStr("volts", voltsChr);
-    if (rawadc) wsSend(str);
-    memset(str,0,sizeof(str));
+    if (rawadc) wsSendInt("raw2", raw2);
   }
 }
 
@@ -1052,16 +1053,13 @@ void mqttData() { // send mqtt messages as required
 
   if (hasIout) {
     mqttPrintStr("amps/amps0", amps0Chr);
-    sprintf(str,"%d", raw0);
-    if (rawadc) mqttPrintStr("amps/raw0", str);
+    if (rawadc) mqttPrintInt("amps/raw0", raw0);
 
     mqttPrintStr("amps/amps1", amps1Chr);
-    sprintf(str,"%d", raw1);
-    if (rawadc) mqttPrintStr("amps/raw1", str);
+    if (rawadc) mqttPrintInt("amps/raw1", raw1);
 
     mqttPrintStr("volts", voltsChr);
-    sprintf(str,"%d", raw2);
-    if (rawadc) mqttPrintStr("volts/raw", str);
+    if (rawadc) mqttPrintInt("volts/raw", raw2);
   }
 }
 
