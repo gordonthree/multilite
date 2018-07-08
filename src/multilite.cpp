@@ -10,7 +10,6 @@
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
 #include <ESP8266WiFi.h>
-#include <ESP8266WiFiMulti.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
@@ -160,7 +159,6 @@ PubSubClient mqtt(espClient);
 OneWire oneWire;
 DallasTemperature ds18b20 = NULL;
 WebSocketsServer webSocket = WebSocketsServer(81);
-ESP8266WiFiMulti wifiMulti;
 PCA9633 rgbw; // instance of pca9633 library
 DHTesp dht; // instance of DHT library
 
@@ -1303,21 +1301,10 @@ void setup() {
   else if (rebootMsg=="Software Watchdog") safeMode=true;
   else if (rebootMsg=="Deep-Sleep Wake") coldBoot=false;
 
-  /*
-  if (sw1>=0) {
-    pinMode(sw1, OUTPUT);
-  }
-  if (sw2>=0) {
-    pinMode(sw2, OUTPUT);
-  }
-  if (sw3>=0) {
-    pinMode(sw3, OUTPUT);
-  }
-  if (sw4>=0) {
-    pinMode(sw4, OUTPUT);
-  }
-  */
-
+  // record reboot reason to log
+  rebootMsg.toCharArray(str, rebootMsg.length()+1);
+  writeLog("reboot",str);
+  
   // "mount" the filesystem
   bool success = SPIFFS.begin();
   if (!success) SPIFFS.format();
@@ -1325,18 +1312,18 @@ void setup() {
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
-  wifiMulti.addAP("DXtrailer", "2317239216");
+  WiFi.begin("DXtrailer", "2317239216");
 #else
-  wifiMulti.addAP("Tell my WiFi I love her", "2317239216");
+  WiFi.begin("Tell my WiFi I love her", "2317239216");
 #endif
 
-  int wifiConnect = 240;
-  while ((wifiMulti.run() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
+  int wifiConnect = 90;
+  while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 90 seconds trying to connect to wifi
     // connecting to wifi
     delay(1000);
   }
 
-  if (wifiMulti.run() != WL_CONNECTED ) { // still not connected? reboot!
+  if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
     writeLog("reboot","no wifi at boot");
     ESP.reset();
     delay(5000);
@@ -1377,7 +1364,6 @@ void setup() {
     // rebootReason.toCharArray(str, rebootReason.length()+1);
     rebootMsg.toCharArray(str, rebootMsg.length()+1);
     mqttPrintStr("reboot/reason", str);
-    writeLog("reboot",str);
   }
 
   // setup i2c if configured, basic sanity checking on configuration
@@ -1547,7 +1533,7 @@ void loop() {
     delay(5000); // give esp time to reboot
   }
 
-  if(wifiMulti.run() != WL_CONNECTED) { // reboot if wifi connection drops
+  if(WiFi.status() != WL_CONNECTED) { // reboot if wifi connection drops
     if (wifiDown++>100) { // hmm, something wrong with the wifi?
       writeLog("reboot","wifi down");
       ESP.reset();
