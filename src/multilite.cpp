@@ -1476,23 +1476,6 @@ void doIout() { // enable current reporting if module is so equipped
   if (amps0<0.080) amps0=0.0;
   if (amps1<0.080) amps1=0.0;
   if (voltage2<0.1) voltage2=0.0;
-  /*
-  char a0[9] = {};
-  char a1[9] = {};
-  char v2[9] = {};
-
-  dtostrf(amps1, 6, 3, a1); // convert precision decimal 6 digits to string?
-  a1[8] = '\0';
-  sprintf(amps1Chr, "amps1=%s", a1); // copy strings together
-
-  dtostrf(amps0, 6, 3, a0); // convert float to precision decimal 6 digits?
-  a0[8] = '\0';
-  sprintf(amps0Chr, "amps0=%s", a0); // copy strings together
-
-  dtostrf(voltage2, 6, 3, v2); // convert float to precision decimal 6 digits?
-  v2[8] = '\0';
-  sprintf(voltsChr, "bat=%s", v2); // copy strings together
-  */
 
   String tmp0 = String("amps0=") + String(amps0,3);
   tmp0.toCharArray(amps0Chr, tmp0.length()+1);
@@ -1545,23 +1528,35 @@ void loop() {
     mqttreconnect(); // check mqqt status
   }
 
+  if (hasADC) doADC();
   if (hasTstat) doTstat();
   if (hasRSSI) doRSSI();
   if (hasTout) doTout();
   if (hasVout) doVout();
   if (hasIout) doIout();
-  if (getRGB) doRGBout();
   if (hasSpeed) doSpeed();
+
+  if (rgbTest) testRGB(); // respond to testrgb command
+  if (getRGB) doRGBout();
+
+  if (setPolo) doPolo(); // respond to ping
 
   if ((doUpdate) || (updateCnt>= ( 60 / ( (updateRate * 20) / 1000) ) ) ) runUpdate(); // check for config update as requested or every 60 loops
 
   if (wsConcount>0) wsData();
   if (useMQTT) mqttData(); // regular update for non RGB controllers
+
   if (prtConfig) printConfig(); // config print was requested
+
   if (prtLog) readLog(); // log dump requested
   if (rmLog) deleteLog(); // Remove log file
+
   if (rmConfig) deleteConfig(); // Remove IOT config file
-  if (hasADC) doADC();
+  if (prtTstat) printTstat(); // update thermostat if commanded
+
+  if (getTime) updateNTP(); // update time if requested by command
+
+  if (scanI2C) i2c_scan(); // respond to i2c scan command
 
   if ((!skipSleep) && (sleepEn)) {
     sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
@@ -1576,17 +1571,13 @@ void loop() {
 
     webSocket.loop(); // keep websocket alive if enabled
 
-    if (prtTstat) printTstat(); // update thermostat if commanded
-    if (getTime) updateNTP(); // update time if requested by command
-    if (scanI2C) i2c_scan(); // respond to i2c scan command
-
     if (hasRGB) doRGB(); // rgb updates
-    if (rgbTest) testRGB(); // respond to testrgb command
-
-    if (setPolo) doPolo(); // respond to ping
-
     if (setReset) doReset(); // execute reboot command
 
+    if ((now() % 14400) == 0) { // record time to the log every four hours
+      writeLog("system","mark");
+    }
+    
     delay(20);
   }
 
@@ -1602,6 +1593,7 @@ void loop() {
     delay(5000); // give esp time to fall asleep
 
   }
+  
   skipSleep = false;
   updateCnt++;
 }
