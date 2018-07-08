@@ -21,7 +21,7 @@
 
 // uncomment for ac switch module, leave comment for dc switch module
 // #define _ACMULTI true
-// #define _TRAILER true
+#define _TRAILER true
 // owdat is set by json config now!
 
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
@@ -109,6 +109,7 @@ unsigned char mqttFail = 0;
 unsigned char speedAddr = 0; // i2c address for speed control chip
 unsigned char fanSpeed=0, fanDirection=0;
 int sw1 = -1, sw2 = -1, sw3 = -1, sw4 = -1;
+bool rebootMQTT = false; // flag to signal reboot on mqtt broker unavailable
 bool altAdcvbat = false;
 bool safeMode = false;
 bool getTime = false;
@@ -852,8 +853,11 @@ void mqttreconnect() {
 
   int retry = 0;
   if (mqttFail>=100) { // repeated mqtt failure could mean network trouble, reboot esp
-    writeLog("reboot","mqtt disconnected");
-    doReset();
+    mqttFail = 0;
+    if (rebootMQTT) {
+      writeLog("reboot","mqtt disconnected");
+      doReset();
+    }
   }
 
   // Loop until we're reconnected
