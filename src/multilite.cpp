@@ -1377,6 +1377,7 @@ void setup() {
     // rebootReason.toCharArray(str, rebootReason.length()+1);
     rebootMsg.toCharArray(str, rebootMsg.length()+1);
     mqttPrintStr("reboot/reason", str);
+    writeLog("reboot",str);
   }
 
   // setup i2c if configured, basic sanity checking on configuration
