@@ -351,7 +351,7 @@ void readLog() {
     return; // oh well we tried
   }
   // mqttPrintStr("log", "Log file opened");
-  uint8_t c = 0;
+  int c = 0;
   while (logFile.available()) {
     int readBytes = logFile.readBytesUntil(endLine, logLine, bSize);
     sprintf(tempStr,"line %u: %s\0", c, logLine);
