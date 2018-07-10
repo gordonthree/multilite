@@ -24,8 +24,8 @@
 // ADC_MODE(ADC_VCC); // add for outdoor probe, rgbled module
 #endif
 
-const char sw1 = 4;
-const char sw2 = 5;
+const char sw1 = 12;
+const char sw2 = 13;
 
 char rssiChr[10];
 char myChr[32];
@@ -34,8 +34,9 @@ unsigned char mac[6];
 char macStr[12];
 char url[100];
 char str[64];
-char nodename[32];
-char mqttServer[32], mqttpub[64],mqttsub[64], mqttbase[64];
+const char* nodename="testsw1";
+const char* mqttbase="home/testsw1";
+const char* mqttpub="home/testsw1/msg";
 int updateRate = 30;
 unsigned char updateCnt = 0;
 unsigned char mqttFail = 0;
@@ -47,13 +48,13 @@ WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
 
-void mqttPrintStr(char* _topic, char* myStr) {
+void mqttPrintStr(const char* _topic, const char* myStr) {
   char myTopic[64];
   sprintf(myTopic, "%s/%s", mqttbase, _topic);
   mqtt.publish(myTopic, myStr);
 }
 
-void mqttPrintInt(char* myTopic, int myNum) {
+void mqttPrintInt(const char* myTopic, const int myNum) {
   char myStr[8];
   sprintf(myStr, "%d", myNum);
   mqttPrintStr(myTopic, myStr);
@@ -114,9 +115,9 @@ void mqttreconnect() {
     if (mqtt.connect(nodename)) {
       mqttFail=0; // reset fail counter
       // Once connected, publish an announcement...
-      mqttPrintStr(mqttpub, "Hello, world!");
+      mqttPrintStr("msg", "Hello, world!");
       // ... and resubscribe
-      mqtt.subscribe(mqttsub);
+      mqtt.subscribe("home/testsw1/cmd");
     } else {
       // Wait before retrying
       delay(100);
@@ -146,7 +147,7 @@ void setupOTA() { // init arduino ide ota library
 }
 
 void setupMQTT() {
-  mqtt.setServer("192.168.10.30", 1883); // setup mqtt broker connection
+  mqtt.setServer("192.168.2.30", 1883); // setup mqtt broker connection
   mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
   mqttreconnect(); // check mqqt status
 }
@@ -160,7 +161,7 @@ void setup() {
   else if (rebootMsg=="Software Watchdog") safeMode=true;
   else if (rebootMsg=="Deep-Sleep Wake") coldBoot=false;
 
-  WiFi.begin("DXtrailer", "2317239216");
+  WiFi.begin("Tell my WiFi I love her", "2317239216");
 
   int wifiConnect = 240;
   while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
