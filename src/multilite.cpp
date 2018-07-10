@@ -851,7 +851,6 @@ void mqttreconnect() {
   if (!useMQTT) return; // bail out if mqtt is not configured
   char tmp[200];
 
-  int retry = 0;
   if (mqttFail>=100) { // repeated mqtt failure could mean network trouble, reboot esp
     mqttFail = 0;
     if (rebootMQTT) {
@@ -860,6 +859,7 @@ void mqttreconnect() {
     }
   }
 
+  int retry = 0;
   // Loop until we're reconnected
   while (!mqtt.connected()) {
     // Attempt to connect
@@ -868,6 +868,7 @@ void mqttreconnect() {
       mqttPrintStr(mqttpub, "Hello, world!");
       // ... and resubscribe
       mqtt.subscribe(mqttsub);
+      mqttFail=0; // reset fail counter
       if (hasSpeed) { // subscribe to speed control topic
         sprintf(tmp, "%s/fan/setspd", mqttbase);
         mqtt.subscribe(tmp);
@@ -1566,10 +1567,6 @@ void loop() {
     if (hasRGB) doRGB(); // rgb updates
     if (setReset) doReset(); // execute reboot command
 
-    if ((now() % 14400) == 0) { // record time to the log every four hours
-      writeLog("system","mark");
-    }
-    
     delay(20);
   }
 
