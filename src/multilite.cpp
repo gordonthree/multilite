@@ -10,28 +10,28 @@
 #define _ON 1
 #define _OFF 0
 
-const char sw1 = 12;
-const char sw2 = 13;
+const char sw1 = 5;
+const char sw2 = 4;
 
-char rssiChr[10];
-char myChr[32];
-uint8_t wifiDown = 0;
-unsigned char mac[6];
-char macStr[12];
+//char rssiChr[10];
+//char myChr[32];
+//uint8_t wifiDown = 0;
+//unsigned char mac[6];
+//char macStr[12];
 
 char str[64];
-const char* nodename="testsw2";
-const char* mqttbase="home/testsw2";
-const char* mqttpub="home/testsw2/msg";
-const char* mqttsub="home/testsw/cmd";
+const char* nodename="frontswitch";
+const char* mqttbase="trailer/frontswitch";
+const char* mqttpub="trailer/frontswitch/msg";
+const char* mqttsub="trailer/frontswitch/cmd";
 
-const char* mqttServer="192.168.2.30";
+const char* mqttServer="192.168.10.30";
 const int mqttPort=1883;
 
-int updateRate = 30;
-unsigned char updateCnt = 0;
+const char* wifiSSID="DXtrailer";
+const char* wifiPSK="2317239216";
+
 unsigned char mqttFail = 0;
-bool safeMode = false;
 bool coldBoot = true;
 bool setPolo = false;
 
@@ -145,8 +145,6 @@ void setupOTA() { // init arduino ide ota library
   ArduinoOTA.begin(); // start listening for arduinoota updates
 }
 
-
-
 void setup() {
   pinMode(sw1, OUTPUT);
   pinMode(sw2, OUTPUT); 
@@ -155,13 +153,8 @@ void setup() {
 
     // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
-  if (rebootMsg=="Exception") safeMode=true;
-  else if (rebootMsg=="Hardware Watchdog") safeMode=true;
-  else if (rebootMsg=="Unknown") safeMode=true;
-  else if (rebootMsg=="Software Watchdog") safeMode=true;
-  else if (rebootMsg=="Deep-Sleep Wake") coldBoot=false;
 
-  WiFi.begin("Tell my WiFi I love her", "2317239216");
+  WiFi.begin(wifiSSID, wifiPSK);
 
   int wifiConnect = 240;
   while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 2 minutes trying to connect to wifi
