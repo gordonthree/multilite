@@ -13,26 +13,27 @@
 const char sw1 = 5;
 const char sw2 = 4;
 
-//char rssiChr[10];
-//char myChr[32];
-//uint8_t wifiDown = 0;
-//unsigned char mac[6];
-//char macStr[12];
-
 char str[64];
 char mqttbase[64];
 char mqttsub[100];
 
 const char* nodename="frontswitch";
-const char* mqttroot="trailer";
 const char* myPub="msg";
 const char* mySub="cmd";
 
-const char* mqttServer="192.168.10.30";
 const int mqttPort=1883;
 
+#ifdef __TRAILER
+const char* mqttroot="trailer";
+const char* mqttServer="192.168.10.30";
 const char* wifiSSID="DXtrailer";
 const char* wifiPSK="2317239216";
+#else
+const char* mqttroot="home";
+const char* mqttServer="192.168.2.30";
+const char* wifiSSID="Tell my WiFi I love her";
+const char* wifiPSK="2317239216";
+#endif
 
 unsigned char mqttFail = 0;
 bool coldBoot = true;
@@ -43,7 +44,6 @@ long loopTimer = 0;
 
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
-
 
 void mqttPrintStr(const char* _topic, const char* myStr) {
   char myTopic[255];
