@@ -6,23 +6,9 @@
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
 
-// uncomment for ac switch module, leave comment for dc switch module
-// #define _ACMULTI true
-#define _TRAILER true
-// owdat is set by json config now!
 
-#ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
-  #define _ON 0
-  #define _OFF 1
-  //#define OWDAT 4 // owdat usually on 4 for ac nodes, 13 for dc nodes
-  ADC_MODE(ADC_VCC);
-#else //driving mosfets, 1 is on, 0 is off
-  #define _ON 1
-  #define _OFF 0
-// ADC_MODE(ADC_VCC); // added for outdoor probe
-// #define OWDAT 13 // dc nodes are usualy using 13 for owdat, outdoor probes use 4
-// ADC_MODE(ADC_VCC); // add for outdoor probe, rgbled module
-#endif
+#define _ON 1
+#define _OFF 0
 
 const char sw1 = 12;
 const char sw2 = 13;
@@ -32,11 +18,13 @@ char myChr[32];
 uint8_t wifiDown = 0;
 unsigned char mac[6];
 char macStr[12];
-char url[100];
+
 char str[64];
-const char* nodename="testsw1";
-const char* mqttbase="home/testsw1";
-const char* mqttpub="home/testsw1/msg";
+const char* nodename="testsw2";
+const char* mqttbase="home/testsw2";
+const char* mqttpub="home/testsw2/msg";
+const char* mqttsub="home/testsw/cmd";
+
 int updateRate = 30;
 unsigned char updateCnt = 0;
 unsigned char mqttFail = 0;
@@ -44,12 +32,15 @@ bool safeMode = false;
 bool coldBoot = true;
 bool setPolo = false;
 
+long lastReconnectAttempt = 0;
+long loopTimer = 0;
+
 WiFiClient espClient;
 PubSubClient mqtt(espClient);
 
 
 void mqttPrintStr(const char* _topic, const char* myStr) {
-  char myTopic[64];
+  char myTopic[255];
   sprintf(myTopic, "%s/%s", mqttbase, _topic);
   mqtt.publish(myTopic, myStr);
 }
@@ -72,17 +63,20 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
 
-  if (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
-  else {
-    uint8_t i = atoi(cmdVal);
-    if (strcmp(cmdTxt, "ch1en")==0) {
+  if      (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
+  else if (strcmp(cmdTxt, "ch1en")==0) {
+    if (cmdVal!=NULL) {
+      uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
         digitalWrite(sw1, _ON); // nothing fancy for manual mode,
       } else { // OFF
         digitalWrite(sw1, _OFF); // nothing fancy for manual mode,
       }
     }
-    else if (strcmp(cmdTxt, "ch2en")==0) {
+  }
+  else if (strcmp(cmdTxt, "ch2en")==0) {
+    if (cmdVal!=NULL) {
+      uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
         digitalWrite(sw2, _ON); // nothing fancy for manual mode,
       } else { // OFF
@@ -93,40 +87,23 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
 }
 
 // receive mqtt messages
-void mqttCallBack(char* topic, byte* payload, unsigned int len) {
-  char tmp[200];
+void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
+  char tmp[len];
   strncpy(tmp, (char*)payload, len);
   tmp[len] = '\0';
-  handleCmd(tmp);
+  if (len>0) handleCmd(tmp);
 }
 
-// maintain connection to mqtt broker
-void mqttreconnect() {
-  char tmp[200];
+boolean mqttReconnect() {
+  if (mqtt.connect(nodename)) {
+      // subscribe
+      mqtt.subscribe(mqttsub);
 
-  int retry = 0;
-  if (mqttFail>=100) { // repeated mqtt failure could mean network trouble, reboot esp
-    doReset();
-  }
-
-  // Loop until we're reconnected
-  while (!mqtt.connected()) {
-    // Attempt to connect
-    if (mqtt.connect(nodename)) {
-      mqttFail=0; // reset fail counter
-      // Once connected, publish an announcement...
+      // publish an announcement...
       mqttPrintStr("msg", "Hello, world!");
-      // ... and resubscribe
-      mqtt.subscribe("home/testsw1/cmd");
-    } else {
-      // Wait before retrying
-      delay(100);
-    }
-    if (retry++ > 4) { // try five times, return to main loop
-      mqttFail++;
-      return;
-    }
+      mqttPrintInt("msg", mqttFail);
   }
+  return mqtt.connected();
 }
 
 void setupOTA() { // init arduino ide ota library
@@ -149,10 +126,28 @@ void setupOTA() { // init arduino ide ota library
 void setupMQTT() {
   mqtt.setServer("192.168.2.30", 1883); // setup mqtt broker connection
   mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
-  mqttreconnect(); // check mqqt status
+}
+
+void checkMQTT() {
+  if (!mqtt.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      if (mqttReconnect()) lastReconnectAttempt = 0;
+    }
+  } else {
+    // Client connected
+    mqtt.loop();
+  }
 }
 
 void setup() {
+  pinMode(sw1, OUTPUT);
+  pinMode(sw2, OUTPUT); 
+  digitalWrite(sw1, _OFF);
+  digitalWrite(sw2, _OFF);
+
     // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
   if (rebootMsg=="Exception") safeMode=true;
@@ -174,39 +169,39 @@ void setup() {
     delay(5000);
   }
 
-  WiFi.hostname(String("testsw1")); // set network hostname
-  ArduinoOTA.setHostname("testsw1");  // OTA hostname defaults to esp8266-[ChipID]
+  WiFi.hostname(String(nodename)); // set network hostname
+  ArduinoOTA.setHostname(nodename);  // OTA hostname defaults to esp8266-[ChipID]
 
   // setup other things
   setupOTA();
   setupMQTT();
 
   rebootMsg.toCharArray(str, rebootMsg.length()+1);
-  mqttPrintStr("reboot/reason", str);
+  mqttPrintStr("reboot", str);
 
 } // end of setup()
 
 
 void doRSSI() {
-  int rssi = WiFi.RSSI();
-  mqttPrintInt("rssi", rssi);
+  mqttPrintInt("rssi", WiFi.RSSI());
 }
 
 void doPolo() {
   setPolo = false; // respond to an mqtt 'ping' of sorts
-  mqttPrintStr(mqttpub, "Polo");
+  mqttPrintStr("msg", "Polo");
 }
 
 void loop() {
-  doRSSI();
-
-  int cnt = 30;
-  while(cnt--) {
-    if (setPolo) doPolo();
-
-    ArduinoOTA.handle(); // handle OTA updates
-    mqtt.loop(); // keep mqtt alive if enabled
-
-    delay(200);
+  long now = millis();
+  if (now - loopTimer > 2000) { // every 2 seconds
+    loopTimer=now;
+    mqttPrintInt("uptime",now/1000);
+    doRSSI();
   }
+
+  if (setPolo) doPolo();
+
+  ArduinoOTA.handle(); // handle OTA updates
+  checkMQTT();
+  
 }
