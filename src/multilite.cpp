@@ -25,6 +25,9 @@ const char* mqttbase="home/testsw2";
 const char* mqttpub="home/testsw2/msg";
 const char* mqttsub="home/testsw/cmd";
 
+const char* mqttServer="192.168.2.30";
+const int mqttPort=1883;
+
 int updateRate = 30;
 unsigned char updateCnt = 0;
 unsigned char mqttFail = 0;
@@ -106,6 +109,25 @@ boolean mqttReconnect() {
   return mqtt.connected();
 }
 
+void setupMQTT() {
+  mqtt.setServer(mqttServer, mqttPort); // setup mqtt broker connection
+  mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
+}
+
+void checkMQTT() {
+  if (!mqtt.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      if (mqttReconnect()) lastReconnectAttempt = 0;
+    }
+  } else {
+    // Client connected
+    mqtt.loop();
+  }
+}
+
 void setupOTA() { // init arduino ide ota library
   ArduinoOTA.onStart([]() {
     //
@@ -123,24 +145,7 @@ void setupOTA() { // init arduino ide ota library
   ArduinoOTA.begin(); // start listening for arduinoota updates
 }
 
-void setupMQTT() {
-  mqtt.setServer("192.168.2.30", 1883); // setup mqtt broker connection
-  mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
-}
 
-void checkMQTT() {
-  if (!mqtt.connected()) {
-    long now = millis();
-    if (now - lastReconnectAttempt > 5000) {
-      lastReconnectAttempt = now;
-      // Attempt to reconnect
-      if (mqttReconnect()) lastReconnectAttempt = 0;
-    }
-  } else {
-    // Client connected
-    mqtt.loop();
-  }
-}
 
 void setup() {
   pinMode(sw1, OUTPUT);
