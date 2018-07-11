@@ -20,10 +20,13 @@ const char sw2 = 4;
 //char macStr[12];
 
 char str[64];
+char mqttbase[64];
+char mqttsub[100];
+
 const char* nodename="frontswitch";
-const char* mqttbase="trailer/frontswitch";
-const char* mqttpub="trailer/frontswitch/msg";
-const char* mqttsub="trailer/frontswitch/cmd";
+const char* mqttroot="trailer";
+const char* myPub="msg";
+const char* mySub="cmd";
 
 const char* mqttServer="192.168.10.30";
 const int mqttPort=1883;
@@ -44,18 +47,18 @@ PubSubClient mqtt(espClient);
 
 void mqttPrintStr(const char* _topic, const char* myStr) {
   char myTopic[255];
-  sprintf(myTopic, "%s/%s", mqttbase, _topic);
+  sprintf(myTopic, "%s/%s\0", mqttbase, _topic);
   mqtt.publish(myTopic, myStr);
 }
 
 void mqttPrintInt(const char* myTopic, const int myNum) {
   char myStr[8];
-  sprintf(myStr, "%d", myNum);
+  sprintf(myStr, "%d\0", myNum);
   mqttPrintStr(myTopic, myStr);
 }
 
 void doReset() { // reboot on command
-  mqttPrintStr(mqttpub, "Rebooting!");
+  mqttPrintStr(myPub, "Rebooting!");
   delay(50);
   ESP.reset();
   delay(5000); // allow time for reboot
@@ -103,13 +106,16 @@ boolean mqttReconnect() {
       mqtt.subscribe(mqttsub);
 
       // publish an announcement...
-      mqttPrintStr("msg", "Hello, world!");
-      mqttPrintInt("msg", mqttFail);
+      mqttPrintStr(myPub, "Hello, world!");
+      // mqttPrintInt("msg", mqttFail);
   }
   return mqtt.connected();
 }
 
 void setupMQTT() {
+  sprintf(mqttbase, "%s/%s\0", mqttroot, nodename);
+  sprintf(mqttsub, "%s/%s\0", mqttbase, mySub);
+
   mqtt.setServer(mqttServer, mqttPort); // setup mqtt broker connection
   mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
 }
