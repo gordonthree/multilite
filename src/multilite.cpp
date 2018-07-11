@@ -21,7 +21,7 @@
 
 // uncomment for ac switch module, leave comment for dc switch module
 // #define _ACMULTI true
-#define _TRAILER true
+// #define _TRAILER true
 // owdat is set by json config now!
 
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
@@ -94,7 +94,7 @@ int fsVer = 0; // storage for fs config version
 int sleepPeriod = 900;
 int vccOffset = 0;
 int ACSoffset = 1641;
-int updateRate = 30;
+uint16_t updateRate = 30;
 int tstatSet = 21; // default to 21c roughly 70f
 uint8_t tstatMode=0, tstatOper=0; // default thermostat off
 int tstatAmb = 0; // ambient temperature
@@ -151,6 +151,8 @@ bool rmLog = false; // flag to remove spiffs log file
 bool rmConfig = false; // flag to remove spiffs config file
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
+long loopTimer = 0;
+long lastReconnectAttempt = 0;
 
 int ch1en = -1, ch2en = -1, ch3en = -1, ch4en = -1;
 
@@ -233,13 +235,13 @@ void i2c_readbytes(uint8_t address, uint8_t cmd, uint8_t bytecnt) {
 
 void mqttPrintStr(char* _topic, char* myStr) {
   if (!useMQTT) return; // abort if mqtt not setup
-  char myTopic[64];
-  sprintf(myTopic, "%s/%s", mqttbase, _topic);
+  char myTopic[255];
+  sprintf(myTopic, "%s/%s\0", mqttbase, _topic);
   mqtt.publish(myTopic, myStr);
 }
 
 void mqttPrintInt(char* myTopic, int myNum) {
-  char myStr[8];
+  char myStr[16];
   sprintf(myStr, "%u", myNum);
   mqttPrintStr(myTopic, myStr);
 }
@@ -335,10 +337,10 @@ void deleteConfig() {
 }
 
 void readLog() {
-  const uint8_t bSize=150;
+  const uint8_t bSize=240;
   const char endLine = '\n';
   char logLine[bSize];
-  char tempStr[bSize+8];
+  char tempStr[bSize+10];
   prtLog = false;
 
   memset(logLine,0,sizeof(logLine));
@@ -736,11 +738,11 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "iotsrv")==0) {
     iotSrv = cmdVal;
     int theResult = requestConfig(true);
-    if (theResult > -1) setReset=true;
+    if (theResult > -1) setReset=true; 
   }
-  else {
-    uint8_t i = atoi(cmdVal);
-    if (strcmp(cmdTxt, "ch1en")==0) {
+  else if (strcmp(cmdTxt, "ch1en")==0) {
+    if (cmdVal!=NULL) {
+      uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
         ch1en=1;
         digitalWrite(sw1, _ON); // nothing fancy for manual mode,
@@ -749,7 +751,10 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw1, _OFF); // nothing fancy for manual mode,
       }
     }
-    else if (strcmp(cmdTxt, "ch2en")==0) {
+  }
+  else if (strcmp(cmdTxt, "ch2en")==0) {
+    if (cmdVal!=NULL) {
+      uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
         ch2en=1;
         digitalWrite(sw2, _ON); // nothing fancy for manual mode,
@@ -758,7 +763,10 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw2, _OFF); // nothing fancy for manual mode,
       }
     }
-    else if (strcmp(cmdTxt, "ch3en")==0) {
+  }
+  else if (strcmp(cmdTxt, "ch3en")==0) {
+    if (cmdVal!=NULL) {
+      uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
         ch3en=1;
         digitalWrite(sw3, _ON); // nothing fancy for manual mode,
@@ -767,7 +775,10 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
         digitalWrite(sw3, _OFF); // nothing fancy for manual mode,
       }
     }
-    else if (strcmp(cmdTxt, "ch4en")==0) {
+  }
+  else if (strcmp(cmdTxt, "ch4en")==0) {
+    if (cmdVal!=NULL) {
+      uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
         ch4en=1;
         digitalWrite(sw4, _ON); // nothing fancy for manual mode,
@@ -826,15 +837,15 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 }
 
 // receive mqtt messages
-void mqttCallBack(char* topic, byte* payload, unsigned int len) {
+void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   char mqttspd[200];
   char mqttdir[200];
   sprintf(mqttspd, "%s/fan/setspd", mqttbase);
   sprintf(mqttdir, "%s/fan/setdir", mqttbase);
   skipSleep=true; // don't go to sleep if we receive mqtt message
-  char tmp[200];
+  char tmp[len];
   strncpy(tmp, (char*)payload, len);
-  tmp[len] = 0x00;
+  tmp[len] = '\0';
   if (strcmp(topic, mqttspd)==0) { // speed control message received
     fanSpeed = atoi(tmp);
     // mqttPrintStr(mqttpub, tmp);
@@ -847,45 +858,27 @@ void mqttCallBack(char* topic, byte* payload, unsigned int len) {
 }
 
 // maintain connection to mqtt broker
-void mqttreconnect() {
-  if (!useMQTT) return; // bail out if mqtt is not configured
+boolean mqttReconnect() {
+  if (!useMQTT) return false; // bail out if mqtt is not configured
   char tmp[200];
 
-  if (mqttFail>=100) { // repeated mqtt failure could mean network trouble, reboot esp
-    mqttFail = 0;
-    if (rebootMQTT) {
-      writeLog("reboot","mqtt disconnected");
-      doReset();
+  // Attempt to connect
+  if (mqtt.connect(nodename)) {
+    // Once connected, publish an announcement...
+    mqttPrintStr(mqttpub, "Hello, world!");
+    // ... and resubscribe
+    mqtt.subscribe(mqttsub);
+    mqttFail=0; // reset fail counter
+    if (hasSpeed) { // subscribe to speed control topic
+      sprintf(tmp, "%s/fan/setspd\0", mqttbase);
+      mqtt.subscribe(tmp);
+      // mqttPrintStr(mqttpub, tmp);
+      sprintf(tmp, "%s/fan/setdir\0", mqttbase);
+      mqtt.subscribe(tmp);
+      // mqttPrintStr(mqttpub, tmp);
     }
   }
-
-  int retry = 0;
-  // Loop until we're reconnected
-  while (!mqtt.connected()) {
-    // Attempt to connect
-    if (mqtt.connect(nodename)) {
-      // Once connected, publish an announcement...
-      mqttPrintStr(mqttpub, "Hello, world!");
-      // ... and resubscribe
-      mqtt.subscribe(mqttsub);
-      mqttFail=0; // reset fail counter
-      if (hasSpeed) { // subscribe to speed control topic
-        sprintf(tmp, "%s/fan/setspd", mqttbase);
-        mqtt.subscribe(tmp);
-        mqttPrintStr(mqttpub, tmp);
-        sprintf(tmp, "%s/fan/setdir", mqttbase);
-        mqtt.subscribe(tmp);
-        mqttPrintStr(mqttpub, tmp);
-      }
-    } else {
-      // Wait before retrying
-      delay(100);
-    }
-    if (retry++ > 4) { // try five times, return to main loop
-      mqttFail++;
-      return;
-    }
-  }
+  return mqtt.connected();
 }
 
 void setupADC() { // init routine for adc + io expander board
@@ -938,6 +931,8 @@ void doADC() { // figure out which ADC to read and do it
 }
 
 void setupOTA() { // init arduino ide ota library
+  if (hasHostname) ArduinoOTA.setHostname(nodename);  // OTA hostname
+
   ArduinoOTA.onStart([]() {
     writeLog("ota", "start");
   });
@@ -966,7 +961,20 @@ void setupMQTT() {
     useMQTT = true; // set a flag that mqtt is in use
     mqtt.setServer(mqttServer, mqttport); // setup mqtt broker connection
     mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
-    mqttreconnect(); // check mqqt status
+  }
+}
+
+void checkMQTT() {
+  if (!mqtt.connected()) {
+    long now = millis();
+    if (now - lastReconnectAttempt > 5000) {
+      lastReconnectAttempt = now;
+      // Attempt to reconnect
+      if (mqttReconnect()) lastReconnectAttempt = 0;
+    }
+  } else {
+    // Client connected
+    mqtt.loop();
   }
 }
 
@@ -1324,7 +1332,6 @@ void setup() {
 
   if (hasHostname) { // valid config found on FS, set network name
     WiFi.hostname(String(nodename)); // set network hostname
-    ArduinoOTA.setHostname(nodename);  // OTA hostname defaults to esp8266-[ChipID]
     MDNS.begin(nodename); // set mDNS hostname
   }
 
@@ -1498,6 +1505,8 @@ void doPolo() {
 }
 
 void loop() {
+  long loopNow = millis();
+
   if (safeMode) { // safeMode engaged, enter blocking loop wait for an OTA update
     int safeDelay=30000; // five minutes in 100ms counts
     while (safeDelay--) {
@@ -1508,68 +1517,58 @@ void loop() {
     ESP.reset(); // restart, try again
     delay(5000); // give esp time to reboot
   }
+  
+  ArduinoOTA.handle(); // handle OTA updates
+  if (useMQTT) checkMQTT(); // keep mqtt alive if enabled
 
-  if(WiFi.status() != WL_CONNECTED) { // reboot if wifi connection drops
-    if (wifiDown++>100) { // hmm, something wrong with the wifi?
-      writeLog("reboot","wifi down");
-      ESP.reset();
-      delay(5000);
+  webSocket.loop(); // keep websocket alive if enabled
+
+  if (hasRGB) doRGB(); // rgb updates
+  if (setReset) doReset(); // execute reboot command
+
+  if (loopNow - loopTimer > updateRate*10) { // code below runs every few seconds
+    loopTimer = loopNow;
+    mqttPrintInt("uptime",loopNow/1000);
+
+    if (hasADC)   doADC();
+    if (hasTstat) doTstat();
+    if (hasRSSI)  doRSSI();
+    if (hasTout)  doTout();
+    if (hasVout)  doVout();
+    if (hasIout)  doIout();
+    if (hasSpeed) doSpeed();
+
+    if (rgbTest)  testRGB(); // respond to testrgb command
+    if (getRGB)   doRGBout();
+
+    if (setPolo)  doPolo(); // respond to ping
+
+    runUpdate(); // check for config update 
+
+    if (wsConcount>0) wsData();
+    if (useMQTT) mqttData(); // regular update for non RGB controllers
+
+    if (prtConfig) printConfig(); // config print was requested
+
+    if (prtLog) readLog(); // log dump requested
+    if (rmLog) deleteLog(); // Remove log file
+
+    if (rmConfig) deleteConfig(); // Remove IOT config file
+    if (prtTstat) printTstat(); // update thermostat if commanded
+
+    if (getTime) updateNTP(); // update time if requested by command
+
+    if (scanI2C) i2c_scan(); // respond to i2c scan command
+
+    /*if ((!skipSleep) && (sleepEn)) {
+      sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
+      mqttPrintStr(mqttpub, str);
     }
+    */
   }
 
-  if (!mqtt.connected()) {
-    mqttreconnect(); // check mqqt status
-  }
 
-  if (hasADC) doADC();
-  if (hasTstat) doTstat();
-  if (hasRSSI) doRSSI();
-  if (hasTout) doTout();
-  if (hasVout) doVout();
-  if (hasIout) doIout();
-  if (hasSpeed) doSpeed();
-
-  if (rgbTest) testRGB(); // respond to testrgb command
-  if (getRGB) doRGBout();
-
-  if (setPolo) doPolo(); // respond to ping
-
-  if ((doUpdate) || (updateCnt>= ( 60 / ( (updateRate * 20) / 1000) ) ) ) runUpdate(); // check for config update as requested or every 60 loops
-
-  if (wsConcount>0) wsData();
-  if (useMQTT) mqttData(); // regular update for non RGB controllers
-
-  if (prtConfig) printConfig(); // config print was requested
-
-  if (prtLog) readLog(); // log dump requested
-  if (rmLog) deleteLog(); // Remove log file
-
-  if (rmConfig) deleteConfig(); // Remove IOT config file
-  if (prtTstat) printTstat(); // update thermostat if commanded
-
-  if (getTime) updateNTP(); // update time if requested by command
-
-  if (scanI2C) i2c_scan(); // respond to i2c scan command
-
-  if ((!skipSleep) && (sleepEn)) {
-    sprintf(str,"Sleeping in %u seconds.", (updateRate*20/1000));
-    mqttPrintStr(mqttpub, str);
-  }
-
-  int cnt = 30;
-  if (updateRate>30) cnt=updateRate;
-  while(cnt--) {
-    ArduinoOTA.handle(); // handle OTA updates
-    if (useMQTT) mqtt.loop(); // keep mqtt alive if enabled
-
-    webSocket.loop(); // keep websocket alive if enabled
-
-    if (hasRGB) doRGB(); // rgb updates
-    if (setReset) doReset(); // execute reboot command
-
-    delay(20);
-  }
-
+  /*
   if ((!skipSleep) && (sleepEn)) {
     if ((sleepPeriod<30) || (sleepPeriod>4294)) sleepPeriod=900; // prevent sleeping for less than 1 minute or more than the counter will allow, roughly 1 hour
     sprintf(myChr,"Back in %d seconds.", sleepPeriod);
@@ -1584,5 +1583,5 @@ void loop() {
   }
 
   skipSleep = false;
-  updateCnt++;
+  */
 }
