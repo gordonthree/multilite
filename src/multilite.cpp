@@ -24,6 +24,10 @@
 // #define _TRAILER true
 // owdat is set by json config now!
 
+#define _ON 1
+#define _OFF 0
+
+
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
   #define _ON 0
   #define _OFF 1
@@ -63,6 +67,8 @@ char voltsChr[10];
 char amps0Chr[10];
 char amps1Chr[10];
 char adcChr[10];
+char rebootChar[100];
+
 int16_t adcVal[4];
 uint8_t adcEnable = 0;
 uint8_t wifiDown = 0;
@@ -264,6 +270,16 @@ void printMQTTaddr() {
 void printNTPaddr() {
   sprintf(str,"Using NTP server %s.", ntpServerName);
   mqttPrintStr("time", str);
+}
+
+void printReboot() {
+  mqttPrintStr("reboot/reason", rebootChar);
+}
+
+void printSwitches() {
+  char switches[100];
+  sprintf(switches, "pin assignments sw1=%u sw2=%u sw3=%u sw4=%u\0", sw1, sw2, sw3, sw4);
+  mqttPrintStr("debug",switches);
 }
 
 void wsSend(const char* _str) {
@@ -718,46 +734,28 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
 
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
-  mqttPrintStr("debug",cmdTxt);
-
   char* cmdVal = strtok(NULL, "=");
-  mqttPrintStr("debug",cmdVal);
   
   if (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
-  else if (strcmp(cmdTxt, "prttstat")==0) prtTstat = true; // print thermostat config
-  else if (strcmp(cmdTxt, "update")==0) doUpdate = true; // upadte config from api
-  else if (strcmp(cmdTxt, "getrgb")==0) getRGB = true; // print RGBW color values
-  else if (strcmp(cmdTxt, "rgbtest")==0) rgbTest = true; // test RGBW output
-  else if (strcmp(cmdTxt, "scani2c")==0) scanI2C = true; // print i2c bus scan
   else if (strcmp(cmdTxt, "reboot")==0) setReset = true; // reboot controller
-  else if (strcmp(cmdTxt, "gettime")==0) getTime = true; // print internal timestamp
-  else if (strcmp(cmdTxt, "prtconfig")==0) prtConfig = true; // print running config
-  else if (strcmp(cmdTxt, "prtlog")==0) prtLog = true; // print running config
-  else if (strcmp(cmdTxt, "rmlog")==0) rmLog = true; // print running config
-  else if (strcmp(cmdTxt, "rmconfig")==0) rmConfig = true; // print running config
-  else if (strcmp(cmdTxt, "fandir")==0) if (cmdVal!=NULL) fanDirection = atoi(cmdVal); // set fan direction
-  else if (strcmp(cmdTxt, "settemp")==0) if (cmdVal!=NULL) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
-  else if (strcmp(cmdTxt, "fanspd")==0) if (cmdVal!=NULL) fanSpeed = atoi(cmdVal); // set fan speed
-  else if (strcmp(cmdTxt, "setmode")==0) if (cmdVal!=NULL) tstatMode = atoi(cmdVal); // set thermostat mode -1 off, 0 heat, 1 cool
-  else if (strcmp(cmdTxt, "red")==0) if (cmdVal!=NULL) red = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "green")==0) if (cmdVal!=NULL) green = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "blue")==0) if (cmdVal!=NULL) blue = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "white")==0) if (cmdVal!=NULL) white = atoi(cmdVal);
   else if (strcmp(cmdTxt, "ch1en")==0) {
-    mqttPrintStr("debug", "ch1en");
+    mqttPrintInt("debug", sw1);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       mqttPrintInt("ch1en",i);
       if (i == 1) { // ON
+        mqttPrintStr("ch1en","on");
         ch1en=1;
         digitalWrite(sw1, _ON); // nothing fancy for manual mode,
       } else { // OFF
+        mqttPrintStr("ch1en","off");
         ch1en=0;
         digitalWrite(sw1, _OFF); // nothing fancy for manual mode,
       }
     }
   }
   else if (strcmp(cmdTxt, "ch2en")==0) {
+    mqttPrintInt("debug", sw2);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
@@ -770,6 +768,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
     }
   }
   else if (strcmp(cmdTxt, "ch3en")==0) {
+    mqttPrintInt("debug", sw3);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
@@ -782,6 +781,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
     }
   }
   else if (strcmp(cmdTxt, "ch4en")==0) {
+    mqttPrintInt("debug", sw4);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
@@ -793,6 +793,22 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
       }
     }
   }
+  else if (strcmp(cmdTxt, "prttstat")==0) prtTstat = true; // print thermostat config
+  else if (strcmp(cmdTxt, "update")==0) doUpdate = true; // upadte config from api
+  else if (strcmp(cmdTxt, "getrgb")==0) getRGB = true; // print RGBW color values
+  else if (strcmp(cmdTxt, "rgbtest")==0) rgbTest = true; // test RGBW output
+  else if (strcmp(cmdTxt, "scani2c")==0) scanI2C = true; // print i2c bus scan
+  else if (strcmp(cmdTxt, "gettime")==0) getTime = true; // print internal timestamp
+  else if (strcmp(cmdTxt, "prtconfig")==0) prtConfig = true; // print running config
+  else if (strcmp(cmdTxt, "prtlog")==0) prtLog = true; // print running config
+  else if (strcmp(cmdTxt, "rmlog")==0) rmLog = true; // print running config
+  else if (strcmp(cmdTxt, "rmconfig")==0) rmConfig = true; // print running config
+  else if (strcmp(cmdTxt, "settemp")==0) if (cmdVal!=NULL) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
+  else if (strcmp(cmdTxt, "setmode")==0) if (cmdVal!=NULL) tstatMode = atoi(cmdVal); // set thermostat mode -1 off, 0 heat, 1 cool
+  else if (strcmp(cmdTxt, "red")==0) if (cmdVal!=NULL) red = atoi(cmdVal);
+  else if (strcmp(cmdTxt, "green")==0) if (cmdVal!=NULL) green = atoi(cmdVal);
+  else if (strcmp(cmdTxt, "blue")==0) if (cmdVal!=NULL) blue = atoi(cmdVal);
+  else if (strcmp(cmdTxt, "white")==0) if (cmdVal!=NULL) white = atoi(cmdVal);  
 }
 
 // handle websocket events below
@@ -873,7 +889,7 @@ boolean mqttReconnect() {
     mqttPrintStr(mqttpub, "Hello, world!");
     // ... and resubscribe
     mqtt.subscribe(mqttsub);
-    mqttFail=0; // reset fail counter
+    prtConfig=true; // send out config report
     if (hasSpeed) { // subscribe to speed control topic
       sprintf(tmp, "%s/fan/setspd\0", mqttbase);
       mqtt.subscribe(tmp);
@@ -1187,6 +1203,7 @@ void setupTstat() {
 }
 
 void printConfig() { // print relevant config bits out to mqtt
+  printReboot();
   if (timeOut) mqttPrintStr(mqttpub, "Timestamp enabled.");
   if (hasFan) mqttPrintStr(mqttpub, "Fan control enabled.");
   if (hasRGB) mqttPrintStr(mqttpub, "RGBW control enabled.");
@@ -1198,6 +1215,7 @@ void printConfig() { // print relevant config bits out to mqtt
   printIOTurl();
   printMQTTaddr();
   printNTPaddr();
+  printSwitches();
   prtConfig=false;
 }
 
@@ -1312,9 +1330,9 @@ void setup() {
   else if (rebootMsg=="Deep-Sleep Wake") coldBoot=false;
 
   // record reboot reason to log
-  rebootMsg.toCharArray(str, rebootMsg.length()+1);
-  writeLog("reboot",str);
-  
+  rebootMsg.toCharArray(rebootChar, rebootMsg.length()+1);
+  writeLog("reboot",rebootChar);
+
   // "mount" the filesystem
   bool success = SPIFFS.begin();
   if (!success) SPIFFS.format();
@@ -1409,10 +1427,6 @@ void setup() {
     }
   }
 
-  // send config data to mqtt
-  if (coldBoot) {
-    printConfig();
-  }
   writeLog("system", "online");
 } // end of setup()
 
