@@ -24,10 +24,6 @@
 // #define _TRAILER true
 // owdat is set by json config now!
 
-#define _ON 1
-#define _OFF 0
-
-
 #ifdef _ACMULTI // driving relay modules, 0 is on, 1 is off
   #define _ON 0
   #define _OFF 1
