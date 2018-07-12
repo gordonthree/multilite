@@ -103,7 +103,7 @@ time_t oldEpoch = 0;
 uint8_t red=0,green=0,blue=0,white=0;
 uint8_t oldred=0,oldgreen=0,oldblue=0,oldwhite=0;
 uint8_t rgbwChan=57; // b00111001 four nibbles to map RGBW to pwm channels
-unsigned char updateCnt = 0;
+uint8_t updateCnt = 0;
 unsigned char newWScon = 0;
 unsigned char mqttFail = 0;
 unsigned char speedAddr = 0; // i2c address for speed control chip
@@ -332,8 +332,11 @@ void deleteLog() {
 
 void deleteConfig() {
   rmConfig = false;
-  if (SPIFFS.remove("/iot.json")) mqttPrintStr("config", "Config file removed");
-  writeLog("system","config file removed");
+  if (SPIFFS.remove("/iot.json")) {
+    mqttPrintStr("config", "Config file removed");
+    writeLog("system","config file removed");
+  } 
+  
 }
 
 void readLog() {
@@ -711,10 +714,15 @@ void getConfig() { // start the process to get config from api server
 }
 
 void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
+  mqttPrintStr("debug",cmdStr);
+
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
-  char* cmdVal = strtok(NULL, "=");
+  mqttPrintStr("debug",cmdTxt);
 
+  char* cmdVal = strtok(NULL, "=");
+  mqttPrintStr("debug",cmdVal);
+  
   if (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
   else if (strcmp(cmdTxt, "prttstat")==0) prtTstat = true; // print thermostat config
   else if (strcmp(cmdTxt, "update")==0) doUpdate = true; // upadte config from api
@@ -727,22 +735,19 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "prtlog")==0) prtLog = true; // print running config
   else if (strcmp(cmdTxt, "rmlog")==0) rmLog = true; // print running config
   else if (strcmp(cmdTxt, "rmconfig")==0) rmConfig = true; // print running config
-  else if (strcmp(cmdTxt, "fanspd")==0) fanSpeed = atoi(cmdVal); // set fan speed
-  else if (strcmp(cmdTxt, "fandir")==0) fanDirection = atoi(cmdVal); // set fan direction
-  else if (strcmp(cmdTxt, "settemp")==0) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
-  else if (strcmp(cmdTxt, "setmode")==0) tstatMode = atoi(cmdVal); // set thermostat mode -1 off, 0 heat, 1 cool
-  else if (strcmp(cmdTxt, "red")==0) red = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "green")==0) green = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "blue")==0) blue = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "white")==0) white = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "iotsrv")==0) {
-    iotSrv = cmdVal;
-    int theResult = requestConfig(true);
-    if (theResult > -1) setReset=true; 
-  }
+  else if (strcmp(cmdTxt, "fandir")==0) if (cmdVal!=NULL) fanDirection = atoi(cmdVal); // set fan direction
+  else if (strcmp(cmdTxt, "settemp")==0) if (cmdVal!=NULL) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
+  else if (strcmp(cmdTxt, "fanspd")==0) if (cmdVal!=NULL) fanSpeed = atoi(cmdVal); // set fan speed
+  else if (strcmp(cmdTxt, "setmode")==0) if (cmdVal!=NULL) tstatMode = atoi(cmdVal); // set thermostat mode -1 off, 0 heat, 1 cool
+  else if (strcmp(cmdTxt, "red")==0) if (cmdVal!=NULL) red = atoi(cmdVal);
+  else if (strcmp(cmdTxt, "green")==0) if (cmdVal!=NULL) green = atoi(cmdVal);
+  else if (strcmp(cmdTxt, "blue")==0) if (cmdVal!=NULL) blue = atoi(cmdVal);
+  else if (strcmp(cmdTxt, "white")==0) if (cmdVal!=NULL) white = atoi(cmdVal);
   else if (strcmp(cmdTxt, "ch1en")==0) {
+    mqttPrintStr("debug", "ch1en");
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
+      mqttPrintInt("ch1en",i);
       if (i == 1) { // ON
         ch1en=1;
         digitalWrite(sw1, _ON); // nothing fancy for manual mode,
@@ -1294,6 +1299,10 @@ void setup() {
   memset(amps1Chr,0,sizeof(amps1Chr));
   memset(tmpChr,0,sizeof(tmpChr));
 
+  pinMode(13, OUTPUT);
+  pinMode(12, OUTPUT);
+  
+
     // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
   if (rebootMsg=="Exception") safeMode=true;
@@ -1543,7 +1552,10 @@ void loop() {
 
     if (setPolo)  doPolo(); // respond to ping
 
-    runUpdate(); // check for config update 
+    if (updateCnt++ > 6) {
+      updateCnt=0;
+      runUpdate(); // check for config update 
+    }
 
     if (wsConcount>0) wsData();
     if (useMQTT) mqttData(); // regular update for non RGB controllers
