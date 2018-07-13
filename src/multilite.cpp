@@ -56,7 +56,7 @@ char str[64];
 char mqttbase[64];
 char mqttsub[100];
 
-const char* nodename="frontswitch";
+const char* nodename="testsw1";
 const char* myPub="msg";
 const char* mySub="cmd";
 
@@ -77,6 +77,8 @@ const char* wifiPSK="2317239216";
 unsigned char mqttFail = 0;
 bool coldBoot = true;
 bool setPolo = false;
+
+int rgbRed=0, rgbGreen=0, rgbBlue=0;
 
 long lastReconnectAttempt = 0;
 long loopTimer = 0;
@@ -101,6 +103,14 @@ void doReset() { // reboot on command
   delay(50);
   ESP.reset();
   delay(5000); // allow time for reboot
+}
+
+void doRgbPwm() {
+  pwm_set_duty(rgbGreen, 0);
+	pwm_set_duty(rgbBlue, 1);
+	pwm_set_duty(rgbRed, 2);
+
+	pwm_start(); // commit
 }
 
 void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
@@ -136,13 +146,20 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   char tmp[len];
   strncpy(tmp, (char*)payload, len);
   tmp[len] = '\0';
-  if (len>0) handleCmd(tmp);
+  if      (strcmp(topic, "home/rgb/red")==0)   rgbRed   = atoi((char*)payload);
+  else if (strcmp(topic, "home/rgb/green")==0) rgbGreen = atoi((char*)payload);
+  else if (strcmp(topic, "home/rgb/blue")==0)  rgbBlue  = atoi((char*)payload);
+  else if (len>0) handleCmd(tmp);
 }
 
 boolean mqttReconnect() {
+  char topic[100];
   if (mqtt.connect(nodename)) {
       // subscribe
       mqtt.subscribe(mqttsub);
+      mqtt.subscribe("home/rgb/red");
+      mqtt.subscribe("home/rgb/blue");
+      mqtt.subscribe("home/rgb/green");
 
       // publish an announcement...
       mqttPrintStr(myPub, "Hello, world!");
@@ -267,24 +284,5 @@ void loop() {
 
   ArduinoOTA.handle(); // handle OTA updates
   checkMQTT();
-
-  	// Dimmer the leds
-
-	if (step > 0 && duty >= 5000) {
-		step = -1;
-	} else if (step < 0 && duty <= 0) {
-		step = 1;
-	}
-
-	duty+=step;
-
-	// Set the PWM (note the pwm_start after all changes)
-
-	pwm_set_duty(duty, 0);
-	pwm_set_duty(duty, 1);
-
-	pwm_start(); // commit
-
-  delay(5);
-  
+  doRgbPwm();
 }
