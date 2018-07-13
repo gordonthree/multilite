@@ -850,47 +850,31 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 // receive mqtt messages
 void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   char tmp[len];
-  char mqttmod[200];
-  char mqtttmp[200];
-  char mqttspd[200];
-  char mqttdir[200];
-  char mqttred[200];
-  char mqttgrn[200];
-  char mqttblu[200];
-  char mqttwht[200];
-
-  // topics that we subscribe to, for comparison below
-  sprintf(mqtttmp, "%s/tstat/settemp", mqttbase);
-  sprintf(mqttmod, "%s/tstat/setmode", mqttbase);
-  sprintf(mqttspd, "%s/fan/setspd", mqttbase);
-  sprintf(mqttdir, "%s/fan/setdir", mqttbase);
-  sprintf(mqttred, "%s/rgb/red", mqttbase);
-  sprintf(mqttgrn, "%s/rgb/green", mqttbase);
-  sprintf(mqttblu, "%s/rgb/blue", mqttbase);
-  sprintf(mqttwht, "%s/rgb/white", mqttbase);
 
   if (len<=0) return; // don't process null payload messages
 
   skipSleep=true; // don't go to sleep if we receive mqtt message
   strncpy(tmp, (char*)payload, len);
   tmp[len] = '\0';
-  if (strcmp(topic, mqttspd)==0) {
+  if (strstr(topic, "setspeed")) {
     if (tmp!=NULL) fanSpeed = atoi(tmp);}
-  else if (strcmp(topic, mqttdir)==0) {
+  else if (strstr(topic, "setdir")) {
     if (tmp!=NULL) fanDirection = atoi(tmp);}
-  else if (strcmp(topic, mqtttmp)==0) {
+  else if (strstr(topic, "settemp")) {
     if (tmp!=NULL) tstatSet = atoi(tmp);}
-  else if (strcmp(topic, mqttmod)==0) {
+  else if (strstr(topic, "setmode")) {
     if (tmp!=NULL) tstatMode = atoi(tmp);}
-  else if (strcmp(topic, mqttred)==0) {
+  else if (strstr(topic, "red")) {
     if (tmp!=NULL) red = atoi(tmp);}
-  else if (strcmp(topic, mqttgrn)==0) {
+  else if (strstr(topic, "green")) {
     if (tmp!=NULL) green = atoi(tmp);}
-  else if (strcmp(topic, mqttblu)==0) {
+  else if (strstr(topic, "blue")) {
     if (tmp!=NULL) blue = atoi(tmp);}
-  else if (strcmp(topic, mqttwht)==0) {
+  else if (strstr(topic, "white")) {
     if (tmp!=NULL) white = atoi(tmp);}
-  else handleCmd(tmp);
+  else if (strstr(topic, "cmd")) {
+    handleCmd(tmp);
+  }
 }
 
 // maintain connection to mqtt broker
