@@ -6,12 +6,51 @@
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
 
+extern "C"{
+	#include "pwm.h"
+	#include "user_interface.h"
+}
+
+////// PWM
+
+// Period of PWM frequency -> default of SDK: 5000 -> * 200ns ^= 1 kHz
+
+#define PWM_PERIOD 5000
+
+// PWM channels
+
+#define PWM_CHANNELS 3
+
+// PWM setup (choice all pins that you use PWM)
+
+uint32 io_info[PWM_CHANNELS][3] = {
+	// MUX, FUNC, PIN
+//	{PERIPHS_IO_MUX_GPIO5_U, FUNC_GPIO5,   5}, // D1
+//	{PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4,   4}, // D2
+//	{PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0,   0}, // D3
+//	{PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2,   2}, // D4
+//	{PERIPHS_IO_MUX_MTMS_U,  FUNC_GPIO14, 14}, // D5
+	{PERIPHS_IO_MUX_MTDI_U,  FUNC_GPIO12, 12}, // D6
+	{PERIPHS_IO_MUX_MTCK_U,  FUNC_GPIO13, 13}, // D7
+	{PERIPHS_IO_MUX_MTDO_U,  FUNC_GPIO15 ,15}, // D8
+											   // D0 - not have PWM :-(
+};
+
+// PWM initial duty: all off
+
+uint32 pwm_duty_init[PWM_CHANNELS];
+
+// Dimmer variables
+
+int16_t duty = 0;
+int16_t step = 1;
 
 #define _ON 1
 #define _OFF 0
 
-const char sw1 = 5;
-const char sw2 = 4;
+const char sw1 = 13;
+const char sw2 = 12;
+const char sw3 = 15;
 
 char str[64];
 char mqttbase[64];
@@ -154,8 +193,29 @@ void setupOTA() { // init arduino ide ota library
 void setup() {
   pinMode(sw1, OUTPUT);
   pinMode(sw2, OUTPUT); 
+  pinMode(sw3, OUTPUT); 
   digitalWrite(sw1, _OFF);
   digitalWrite(sw2, _OFF);
+  digitalWrite(sw3, _OFF);
+
+	// Initial duty -> all off
+
+	for (uint8_t channel = 0; channel < PWM_CHANNELS; channel++) {
+		pwm_duty_init[channel] = 0;
+	}
+
+  
+	// Period
+
+	uint32_t period = PWM_PERIOD;
+
+	// Initialize
+
+	pwm_init(period, pwm_duty_init, PWM_CHANNELS, io_info);
+
+	// Commit
+
+	pwm_start();
 
     // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
@@ -207,5 +267,24 @@ void loop() {
 
   ArduinoOTA.handle(); // handle OTA updates
   checkMQTT();
+
+  	// Dimmer the leds
+
+	if (step > 0 && duty >= 5000) {
+		step = -1;
+	} else if (step < 0 && duty <= 0) {
+		step = 1;
+	}
+
+	duty+=step;
+
+	// Set the PWM (note the pwm_start after all changes)
+
+	pwm_set_duty(duty, 0);
+	pwm_set_duty(duty, 1);
+
+	pwm_start(); // commit
+
+  delay(5);
   
 }
