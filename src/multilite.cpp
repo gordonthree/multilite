@@ -849,6 +849,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 // receive mqtt messages
 void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
+  char tmp[len];
   char mqttmod[200];
   char mqtttmp[200];
   char mqttspd[200];
@@ -857,6 +858,8 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   char mqttgrn[200];
   char mqttblu[200];
   char mqttwht[200];
+
+  // topics that we subscribe to, for comparison below
   sprintf(mqtttmp, "%s/tstat/settemp", mqttbase);
   sprintf(mqttmod, "%s/tstat/setmode", mqttbase);
   sprintf(mqttspd, "%s/fan/setspd", mqttbase);
@@ -865,9 +868,10 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   sprintf(mqttgrn, "%s/rgb/green", mqttbase);
   sprintf(mqttblu, "%s/rgb/blue", mqttbase);
   sprintf(mqttwht, "%s/rgb/white", mqttbase);
-  if (len==0 || payload[0]=='\0') return; // don't process null payload messages
+
+  if (len<=0) return; // don't process null payload messages
+
   skipSleep=true; // don't go to sleep if we receive mqtt message
-  char tmp[len];
   strncpy(tmp, (char*)payload, len);
   tmp[len] = '\0';
   if (strcmp(topic, mqttspd)==0) {
@@ -901,7 +905,7 @@ boolean mqttReconnect() {
     // ... and resubscribe
     mqtt.subscribe(mqttsub);
     prtConfig=true; // send out config report
-    if (hasTstat) { // subscribe to speed control topic
+    if (hasTstat) { // subscribe to thermostat topic
       sprintf(tmp, "%s/tstat/settemp\0", mqttbase);
       mqtt.subscribe(tmp);
       sprintf(tmp, "%s/tstat/setmode\0", mqttbase);
@@ -913,7 +917,7 @@ boolean mqttReconnect() {
       sprintf(tmp, "%s/fan/setdir\0", mqttbase);
       mqtt.subscribe(tmp);
     }
-    if (hasRGB) {
+    if (hasRGB) { // subscrie to rgbw led topic
       sprintf(tmp, "%s/rgb/red\0", mqttbase);
       mqtt.subscribe(tmp);
       sprintf(tmp, "%s/rgb/green\0", mqttbase);
