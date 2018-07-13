@@ -244,7 +244,7 @@ void mqttPrintStr(char* _topic, char* myStr) {
 
 void mqttPrintInt(char* myTopic, int myNum) {
   char myStr[16];
-  sprintf(myStr, "%u", myNum);
+  sprintf(myStr, "%d", myNum);
   mqttPrintStr(myTopic, myStr);
 }
 
@@ -274,7 +274,7 @@ void printReboot() {
 
 void printSwitches() {
   char switches[100];
-  sprintf(switches, "pin assignments sw1=%u sw2=%u sw3=%u sw4=%u\0", sw1, sw2, sw3, sw4);
+  sprintf(switches, "pin assignments sw1=%d sw2=%d sw3=%d sw4=%d\0", sw1, sw2, sw3, sw4);
   mqttPrintStr("debug",switches);
 }
 
@@ -799,12 +799,6 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   else if (strcmp(cmdTxt, "prtlog")==0) prtLog = true; // print running config
   else if (strcmp(cmdTxt, "rmlog")==0) rmLog = true; // print running config
   else if (strcmp(cmdTxt, "rmconfig")==0) rmConfig = true; // print running config
-  else if (strcmp(cmdTxt, "settemp")==0) if (cmdVal!=NULL) tstatSet = atoi(cmdVal); // set thermostat temperature setpoint
-  else if (strcmp(cmdTxt, "setmode")==0) if (cmdVal!=NULL) tstatMode = atoi(cmdVal); // set thermostat mode -1 off, 0 heat, 1 cool
-  else if (strcmp(cmdTxt, "red")==0) if (cmdVal!=NULL) red = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "green")==0) if (cmdVal!=NULL) green = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "blue")==0) if (cmdVal!=NULL) blue = atoi(cmdVal);
-  else if (strcmp(cmdTxt, "white")==0) if (cmdVal!=NULL) white = atoi(cmdVal);  
 }
 
 // handle websocket events below
@@ -855,18 +849,23 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 
 // receive mqtt messages
 void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
+  char mqttmod[200];
+  char mqtttmp[200];
   char mqttspd[200];
   char mqttdir[200];
   char mqttred[200];
   char mqttgrn[200];
   char mqttblu[200];
   char mqttwht[200];
+  sprintf(mqtttmp, "%s/tstat/settemp", mqttbase);
+  sprintf(mqttmod, "%s/tstat/setmode", mqttbase);
   sprintf(mqttspd, "%s/fan/setspd", mqttbase);
   sprintf(mqttdir, "%s/fan/setdir", mqttbase);
   sprintf(mqttred, "%s/rgb/red", mqttbase);
   sprintf(mqttgrn, "%s/rgb/green", mqttbase);
   sprintf(mqttblu, "%s/rgb/blue", mqttbase);
   sprintf(mqttwht, "%s/rgb/white", mqttbase);
+  if (len==0 || payload[0]=='\0') return; // don't process null payload messages
   skipSleep=true; // don't go to sleep if we receive mqtt message
   char tmp[len];
   strncpy(tmp, (char*)payload, len);
@@ -875,6 +874,10 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
     if (tmp!=NULL) fanSpeed = atoi(tmp);}
   else if (strcmp(topic, mqttdir)==0) {
     if (tmp!=NULL) fanDirection = atoi(tmp);}
+  else if (strcmp(topic, mqtttmp)==0) {
+    if (tmp!=NULL) tstatSet = atoi(tmp);}
+  else if (strcmp(topic, mqttmod)==0) {
+    if (tmp!=NULL) tstatMode = atoi(tmp);}
   else if (strcmp(topic, mqttred)==0) {
     if (tmp!=NULL) red = atoi(tmp);}
   else if (strcmp(topic, mqttgrn)==0) {
@@ -898,6 +901,12 @@ boolean mqttReconnect() {
     // ... and resubscribe
     mqtt.subscribe(mqttsub);
     prtConfig=true; // send out config report
+    if (hasTstat) { // subscribe to speed control topic
+      sprintf(tmp, "%s/tstat/settemp\0", mqttbase);
+      mqtt.subscribe(tmp);
+      sprintf(tmp, "%s/tstat/setmode\0", mqttbase);
+      mqtt.subscribe(tmp);
+    }
     if (hasSpeed) { // subscribe to speed control topic
       sprintf(tmp, "%s/fan/setspd\0", mqttbase);
       mqtt.subscribe(tmp);
@@ -1311,6 +1320,8 @@ void printTstat() { // print thermostat configuration specifics
   prtTstat = false;
   if (hasTstat) {
     mqttPrintStr(mqttpub, "Sending thermostat report.");
+    sprintf(str,"Thermostat function using DHT on GPIO %u\0.", DHTPIN);
+    mqttPrintStr(mqttpub, str);
 
     doTstat(); // update data
 
