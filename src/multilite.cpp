@@ -857,20 +857,32 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
 void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   char mqttspd[200];
   char mqttdir[200];
+  char mqttred[200];
+  char mqttgrn[200];
+  char mqttblu[200];
+  char mqttwht[200];
   sprintf(mqttspd, "%s/fan/setspd", mqttbase);
   sprintf(mqttdir, "%s/fan/setdir", mqttbase);
+  sprintf(mqttred, "%s/rgb/red", mqttbase);
+  sprintf(mqttgrn, "%s/rgb/green", mqttbase);
+  sprintf(mqttblu, "%s/rgb/blue", mqttbase);
+  sprintf(mqttwht, "%s/rgb/white", mqttbase);
   skipSleep=true; // don't go to sleep if we receive mqtt message
   char tmp[len];
   strncpy(tmp, (char*)payload, len);
   tmp[len] = '\0';
-  if (strcmp(topic, mqttspd)==0) { // speed control message received
-    fanSpeed = atoi(tmp);
-    // mqttPrintStr(mqttpub, tmp);
-  }
-  else if (strcmp(topic, mqttdir)==0) { // direction control message received
-    fanDirection = atoi(tmp);
-    // mqttPrintStr(mqttpub, tmp);
-  }
+  if (strcmp(topic, mqttspd)==0) {
+    if (tmp!=NULL) fanSpeed = atoi(tmp);}
+  else if (strcmp(topic, mqttdir)==0) {
+    if (tmp!=NULL) fanDirection = atoi(tmp);}
+  else if (strcmp(topic, mqttred)==0) {
+    if (tmp!=NULL) red = atoi(tmp);}
+  else if (strcmp(topic, mqttgrn)==0) {
+    if (tmp!=NULL) green = atoi(tmp);}
+  else if (strcmp(topic, mqttblu)==0) {
+    if (tmp!=NULL) blue = atoi(tmp);}
+  else if (strcmp(topic, mqttwht)==0) {
+    if (tmp!=NULL) white = atoi(tmp);}
   else handleCmd(tmp);
 }
 
@@ -889,10 +901,18 @@ boolean mqttReconnect() {
     if (hasSpeed) { // subscribe to speed control topic
       sprintf(tmp, "%s/fan/setspd\0", mqttbase);
       mqtt.subscribe(tmp);
-      // mqttPrintStr(mqttpub, tmp);
       sprintf(tmp, "%s/fan/setdir\0", mqttbase);
       mqtt.subscribe(tmp);
-      // mqttPrintStr(mqttpub, tmp);
+    }
+    if (hasRGB) {
+      sprintf(tmp, "%s/rgb/red\0", mqttbase);
+      mqtt.subscribe(tmp);
+      sprintf(tmp, "%s/rgb/green\0", mqttbase);
+      mqtt.subscribe(tmp);
+      sprintf(tmp, "%s/rgb/blue\0", mqttbase);
+      mqtt.subscribe(tmp);
+      sprintf(tmp, "%s/rgb/white\0", mqttbase);
+      mqtt.subscribe(tmp);
     }
   }
   return mqtt.connected();
