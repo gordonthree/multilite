@@ -6,6 +6,7 @@
 #include <ESP8266httpUpdate.h>
 #include <PubSubClient.h>
 
+/*
 extern "C"{
 	#include "pwm.h"
 	#include "user_interface.h"
@@ -44,25 +45,26 @@ uint32 pwm_duty_init[PWM_CHANNELS];
 
 int16_t duty = 0;
 int16_t step = 1;
+*/
 
 #define _ON 1
 #define _OFF 0
 
-const char sw1 = 13;
-const char sw2 = 12;
-const char sw3 = 15;
+const char sw1 = 5;
+const char sw2 = 4;
+const char sw3 = 0;
 
 char str[64];
 char mqttbase[64];
 char mqttsub[100];
 
-const char* nodename="testsw1";
+const char* nodename="frontswitch";
 const char* myPub="msg";
 const char* mySub="cmd";
 
 const int mqttPort=1883;
 
-#ifdef __TRAILER
+#ifdef _TRAILER
 const char* mqttroot="trailer";
 const char* mqttServer="192.168.10.30";
 const char* wifiSSID="DXtrailer";
@@ -106,11 +108,11 @@ void doReset() { // reboot on command
 }
 
 void doRgbPwm() {
-  pwm_set_duty(rgbGreen, 0);
-	pwm_set_duty(rgbBlue, 1);
-	pwm_set_duty(rgbRed, 2);
+  // pwm_set_duty(rgbGreen, 0);
+	// pwm_set_duty(rgbBlue, 1);
+	// pwm_set_duty(rgbRed, 2);
 
-	pwm_start(); // commit
+	// pwm_start(); // commit
 }
 
 void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
@@ -210,11 +212,12 @@ void setupOTA() { // init arduino ide ota library
 void setup() {
   pinMode(sw1, OUTPUT);
   pinMode(sw2, OUTPUT); 
-  pinMode(sw3, OUTPUT); 
+//  pinMode(sw3, OUTPUT); 
   digitalWrite(sw1, _OFF);
   digitalWrite(sw2, _OFF);
-  digitalWrite(sw3, _OFF);
+//  digitalWrite(sw3, _OFF);
 
+/*
 	// Initial duty -> all off
 
 	for (uint8_t channel = 0; channel < PWM_CHANNELS; channel++) {
@@ -233,6 +236,7 @@ void setup() {
 	// Commit
 
 	pwm_start();
+*/
 
     // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
@@ -284,5 +288,6 @@ void loop() {
 
   ArduinoOTA.handle(); // handle OTA updates
   checkMQTT();
-  doRgbPwm();
+  // doRgbPwm();
+
 }
