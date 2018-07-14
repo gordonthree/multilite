@@ -1,5 +1,5 @@
 # multiswitch
-esp8266 automated configuration and firmware update
+esp32 automated configuration and firmware update
 
 Very much a work in progress.
 
