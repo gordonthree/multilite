@@ -57,14 +57,15 @@ const int jsonSize = 1024;
 #define DHTPIN 14 // DHT11 always on GPIO 14 for now?
 
 char foo[8];
-char rssiChr[10];
+//char rssiChr[10];
 char myChr[32];
-char voltsChr[10];
-char amps0Chr[10];
-char amps1Chr[10];
-char adcChr[10];
+//char voltsChr[10];
+//char amps0Chr[10];
+//char amps1Chr[10];
+//char adcChr[10];
 char rebootChar[100];
 
+float amps0 = 0.0, amps1 = 0.0, volts0 = 0.0;
 int16_t adcVal[4];
 uint8_t adcEnable = 0;
 uint8_t wifiDown = 0;
@@ -96,6 +97,7 @@ int fsVer = 0; // storage for fs config version
 int sleepPeriod = 900;
 int vccOffset = 0;
 int ACSoffset = 1641;
+int adc0 = 0;
 uint16_t updateRate = 30;
 int tstatSet = 21; // default to 21c roughly 70f
 uint8_t tstatMode=0, tstatOper=0; // default thermostat off
@@ -245,6 +247,12 @@ void mqttPrintStr(char* _topic, char* myStr) {
 void mqttPrintInt(char* myTopic, int myNum) {
   char myStr[16];
   sprintf(myStr, "%d", myNum);
+  mqttPrintStr(myTopic, myStr);
+}
+
+void mqttPrintFloat(char* myTopic, float myNum) {
+  char myStr[16];
+  sprintf(myStr, "%f", myNum);
   mqttPrintStr(myTopic, myStr);
 }
 
@@ -430,6 +438,12 @@ void wsSendStr(const char* label, const char* msg) {
 void wsSendInt(const char* label, int num) {
   memset(str,0,sizeof(str));
   sprintf(str, "%s=%d", label, num);
+  wsSend(str);
+}
+
+void wsSendFloat(const char* label, float num) {
+  memset(str,0,sizeof(str));
+  sprintf(str, "%s=%f", label, num);
   wsSend(str);
 }
 
@@ -1038,22 +1052,22 @@ void wsData() { // send some websockets data if client is connected
   if (hasRGB) return; // stop here if we're an rgb controller
 
   if (hasVout) { // send bat/vcc string
-    wsSendStr("volts", voltsChr);
-    if (rawadc) wsSend(adcChr);
+    wsSendFloat("volts", volts0);
+    if (rawadc) wsSendInt("adc",adc0);
   }
 
-  if (hasRSSI) wsSendStr("rssi",rssiChr); // send rssi info
+  if (hasRSSI) wsSendInt("rssi",WiFi.RSSI()); // send rssi info
 
   if (hasTout) wsSendStr("temp",tmpChr); // send temperature
 
   if (hasIout) { // send readings from ADC
-    wsSend(amps0Chr);
+    wsSendFloat("amps0",amps0);
     if (rawadc) wsSendInt("raw0", raw0);
 
-    wsSend(amps1Chr);
+    wsSendFloat("amps1",amps1);
     if (rawadc) wsSendInt("raw1", raw1);
 
-    wsSendStr("volts", voltsChr);
+    wsSendFloat("volts", volts0);
     if (rawadc) wsSendInt("raw2", raw2);
   }
 }
@@ -1083,20 +1097,20 @@ void mqttData() { // send mqtt messages as required
   if (hasRGB) return; // further prints disabled if we're an rgb controller to save time
 
   if (hasVout) {
-    mqttPrintStr("volts", voltsChr); // print voltage if equipped
-    if (rawadc) mqttPrintStr("volts/raw", adcChr); // raw value
+    mqttPrintFloat("volts", volts0); // print voltage if equipped
+    if (rawadc) mqttPrintInt("volts/raw", adc0); // raw value
   }
 
-  if (hasRSSI) mqttPrintStr("rssi", rssiChr); // print RSSI
+  if (hasRSSI) mqttPrintInt("rssi", WiFi.RSSI()); // print RSSI
 
   if (hasIout) {
-    mqttPrintStr("amps/amps0", amps0Chr);
+    mqttPrintFloat("amps/amps0", amps0);
     if (rawadc) mqttPrintInt("amps/raw0", raw0);
 
-    mqttPrintStr("amps/amps1", amps1Chr);
+    mqttPrintFloat("amps/amps1", amps1);
     if (rawadc) mqttPrintInt("amps/raw1", raw1);
 
-    mqttPrintStr("volts", voltsChr);
+    mqttPrintFloat("volts", volts0);
     if (rawadc) mqttPrintInt("volts/raw", raw2);
   }
 }
@@ -1318,14 +1332,7 @@ void printTstat() { // print thermostat configuration specifics
 }
 
 void setup() {
-  memset(voltsChr,0,sizeof(voltsChr));
-  memset(amps0Chr,0,sizeof(amps0Chr));
-  memset(amps1Chr,0,sizeof(amps1Chr));
   memset(tmpChr,0,sizeof(tmpChr));
-
-  pinMode(13, OUTPUT);
-  pinMode(12, OUTPUT);
-  
 
     // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
@@ -1439,21 +1446,23 @@ void setup() {
 void doVout() {
   int vBat=vccOffset;
   float voltage=0.00;
-  String vStr;
-  memset(voltsChr,0,sizeof(voltsChr));
-  memset(adcChr,0,sizeof(adcChr));
+  //String vStr;
+  //memset(voltsChr,0,sizeof(voltsChr));
+  //memset(adcChr,0,sizeof(adcChr));
 
   if (useGetvcc) {
     vBat += ESP.getVcc(); // internal voltage reference (Vcc);
     voltage = vBat / 1000.0;
-    vStr = String(voltage,3);
+    //vStr = String(voltage,3);
   } else {
     vBat += analogRead(A0); // read the TOUT pin
     voltage = vBat * (vccDivisor / 1023.0); // adjust value, set 5.545 equal to your maximum expected input voltage
-    vStr = String(voltage,3);
+    //vStr = String(voltage,3);
   }
-  sprintf(adcChr, "adc=%d", vBat);
-  vStr.toCharArray(voltsChr, vStr.length()+1);
+  volts0 = voltage;
+  adc0 = vBat;
+  //sprintf(adcChr, "adc=%d", vBat);
+  //vStr.toCharArray(voltsChr, vStr.length()+1);
 }
 
 void doRGBout() {
@@ -1467,9 +1476,9 @@ void doRGBout() {
 }
 
 void doRSSI() {
-  int rssi = WiFi.RSSI();
-  memset(rssiChr,0,sizeof(rssiChr));
-  sprintf(rssiChr, "%d", rssi);
+  // int rssi = WiFi.RSSI();
+  // memset(rssiChr,0,sizeof(rssiChr));
+  // sprintf(rssiChr, "%d", rssi);
 }
 
 void doSpeed() {
@@ -1482,19 +1491,15 @@ void doIout() { // enable current reporting if module is so equipped
   int16_t adc0, adc1, adc2;
   if (!hasI2C) return;
 
-  memset(amps0Chr,0,sizeof(amps0Chr));
-  memset(amps1Chr,0,sizeof(amps1Chr));
-  memset(voltsChr,0,sizeof(voltsChr));
-
-  adc0 = ads.readADC_SingleEnded(1) ; // adc channel 1 = switch 0 (switch one)
+  adc0 = ads.readADC_SingleEnded(1) ; // adc channel 1 = switch 0 (switch one) ** this should probably be programmable, based on current PCB design
   raw0 = adc0;
   float voltage0 = (adc0 / 32767.0) * 4096.0;
-  float amps0 = (voltage0 - ACSoffset) / mvPerA; // 44.0 = mv per amp from datasheet
+  amps0 = (voltage0 - ACSoffset) / mvPerA; // 44.0 = mv per amp from datasheet
 
   adc1 = ads.readADC_SingleEnded(0) ; // adc channel 0 = switch 1 (switch two)
   raw1 = adc1;
   float voltage1 = (adc1 / 32767.0) * 4096.0;
-  float amps1 = (voltage1 - ACSoffset) / mvPerA; // 44.0 = mv per amp from datasheet
+  amps1 = (voltage1 - ACSoffset) / mvPerA; // 44.0 = mv per amp from datasheet
 
   adc2 = ads.readADC_SingleEnded(2) ; // adc channel 2 = battery voltage divider
   raw2 = adc2;
@@ -1502,18 +1507,11 @@ void doIout() { // enable current reporting if module is so equipped
   if (altAdcvbat) voltage2 = (adc2 + vccOffset) / 1000.0;  // funky method for original current switch
   else voltage2 = (adc2 / 32767.0) * vccDivisor;  // proper method, 6.8k / 2.2k voltage divider
 
-  if (amps0<0.080) amps0=0.0;
-  if (amps1<0.080) amps1=0.0;
+  if (amps0<0.010) amps0=0.0; // less than 10ma, might be an error disgregard
+  if (amps1<0.010) amps1=0.0;
   if (voltage2<0.1) voltage2=0.0;
 
-  String tmp0 = String("amps0=") + String(amps0,3);
-  tmp0.toCharArray(amps0Chr, tmp0.length()+1);
-
-  String tmp1 = String("amps1=") + String(amps1,3);
-  tmp1.toCharArray(amps1Chr, tmp1.length()+1);
-
-  String tmp2 = String(voltage2,3);
-  tmp2.toCharArray(voltsChr, tmp2.length()+1);
+  volts0 = voltage2;
 }
 
 void runUpdate() { // test for http update flag, received url via mqtt
