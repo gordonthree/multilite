@@ -4,14 +4,15 @@
 #include <TimeLib.h>
 #include <EasyNTPClient.h>
 #include <FS.h>
-#include <ESP8266mDNS.h>
+#include <SPIFFS.h>
+#include <ESPmDNS.h>
 #include <WebSocketsServer.h>
-#include <Hash.h>
+//#include <Hash.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
-#include <ESP8266WiFi.h>
-#include <ESP8266HTTPClient.h>
-#include <ESP8266httpUpdate.h>
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <Update.h>
 #include <PubSubClient.h>
 #include "DallasTemperature.h"
 #include "pca9633.h"
@@ -111,6 +112,7 @@ unsigned char mqttFail = 0;
 unsigned char speedAddr = 0; // i2c address for speed control chip
 unsigned char fanSpeed=0, fanDirection=0;
 int sw1 = -1, sw2 = -1, sw3 = -1, sw4 = -1;
+bool fsAvailable = false; // flag for SPIFFS availablility
 bool rebootMQTT = true; // flag to signal reboot on mqtt broker unavailable
 bool altAdcvbat = false;
 bool safeMode = false;
@@ -318,8 +320,9 @@ void i2c_scan() {
 
 void writeLog(const char* _event, const char* _message) {
   time_t ts = now();
-
-  File logFile = SPIFFS.open("log.csv","a");
+  if (!fsAvailable) return; // bail out, no filesystem
+  
+  File logFile = SPIFFS.open("/log.csv","a");
   if (!logFile) {
     return; // oh well we tried
   }
@@ -338,12 +341,14 @@ void writeLog(const char* _event, const char* _message) {
 
 void deleteLog() {
   rmLog = false;
+  if (!fsAvailable) return; // bail out, no filesystem
   if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
   writeLog("system","log file removed");
 }
 
 void deleteConfig() {
   rmConfig = false;
+  if (!fsAvailable) return; // bail out, no filesystem
   if (SPIFFS.remove("/iot.json")) {
     mqttPrintStr("config", "Config file removed");
     writeLog("system","config file removed");
@@ -357,6 +362,7 @@ void readLog() {
   char logLine[bSize];
   char tempStr[bSize+10];
   prtLog = false;
+  if (!fsAvailable) return; // bail out, no filesystem
 
   memset(logLine,0,sizeof(logLine));
   memset(tempStr,0,sizeof(tempStr));
@@ -382,6 +388,8 @@ void readLog() {
 
 
 void httpUpdater() {
+  return; // ** THIS needs fixing, httpupdate seems very different in esp32 land
+  /*
   printIOTurl();
   mqttPrintStr("http_update", "Checking...");
   //writeLog("http_update", "checking");
@@ -413,6 +421,7 @@ void httpUpdater() {
         writeLog("http_update","complete");
         break;
   }
+  */
 }
 
 void wsSendTime(const char* msg, time_t mytime) {
@@ -448,6 +457,7 @@ void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
 
 int loadConfig(bool setFSver) {
   int ver = -1;
+  if (!fsAvailable) return ver; // bail out, no filesystem
   File configFile = SPIFFS.open(jsonFile, "r");
   if (!configFile) {
     return ver;
@@ -580,11 +590,11 @@ int loadConfig(bool setFSver) {
 }
 
 void doReset() { // reboot on command
-      mqttPrintStr(mqttpub, "Rebooting!");
-      delay(50);
-      writeLog("reboot","user request");
-      ESP.reset();
-      delay(5000); // allow time for reboot
+  mqttPrintStr(mqttpub, "Rebooting!");
+  delay(50);
+  writeLog("reboot","user request");
+  ESP.restart();
+  delay(5000); // allow time for reboot
 }
 
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
@@ -655,6 +665,7 @@ void wsSwitchstatus() {
 
 int requestConfig(bool save) {
   int ret = -1;
+  if (!fsAvailable) return ret; // bail out, no filesystem
 
   HTTPClient http;
 
@@ -663,7 +674,7 @@ int requestConfig(bool save) {
   http.begin(url); //HTTP
 
   // start connection and send HTTP header
-  int httpCode = http.GET();
+  int httpCode = http.GET(); 
 
   // httpCode will be negative on error
   if(httpCode > 0) {
@@ -706,6 +717,8 @@ int requestConfig(bool save) {
 
 void fsConfig() { // load config json from FS
   if (safeMode) return; // bail out if we're in safemode
+  if (!fsAvailable) return; // bail out, no filesystem
+
   fsVer = loadConfig(true); // try to load config from SPIFFS, set firmware version in memory
   /*if (fsVer!=-1) {
     sprintf(str, "version %d", fsVer);
@@ -714,6 +727,7 @@ void fsConfig() { // load config json from FS
 
 void getConfig() { // start the process to get config from api server
   if (safeMode) return; // bail out if we're in safemode
+  if (!fsAvailable) return; // bail out, no filesystem
   // check with automation server to get latest config version number
   httpVer = requestConfig(false); // request config from server but don't update FS
   if (httpVer!=-1) { // automation server returned valid config version
@@ -830,7 +844,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
           break;
       case WStype_BIN:
          // USE_SERIAL.printf("[%u] get binary lenght: %u\n", num, length);
-          hexdump(payload, length);
+          // hexdump(payload, length);
 
           // send message to client
           // webSocket.sendBIN(num, payload, lenght);
@@ -1327,21 +1341,26 @@ void setup() {
   pinMode(12, OUTPUT);
   
 
-    // if the program crashed, skip things that might make it crash
+  // seems resetreason is a bit more complex
+  String rebootMsg = "Fix Me / Fake Message";
+  // if the program crashed, skip things that might make it crash
+  /*
   String rebootMsg = ESP.getResetReason();
   if (rebootMsg=="Exception") safeMode=true;
   else if (rebootMsg=="Hardware Watchdog") safeMode=true;
   else if (rebootMsg=="Unknown") safeMode=true;
   else if (rebootMsg=="Software Watchdog") safeMode=true;
   else if (rebootMsg=="Deep-Sleep Wake") coldBoot=false;
+  */
 
   // record reboot reason to log
   rebootMsg.toCharArray(rebootChar, rebootMsg.length()+1);
   writeLog("reboot",rebootChar);
 
   // "mount" the filesystem
-  bool success = SPIFFS.begin();
-  if (!success) SPIFFS.format();
+  bool success = SPIFFS.begin(true, "/spiffs", 10);
+  //if (!success) SPIFFS.format();
+  if (success) fsAvailable = true;
 
   if (!safeMode) fsConfig(); // read node config from FS
 
@@ -1359,12 +1378,12 @@ void setup() {
 
   if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
     writeLog("reboot","no wifi at boot");
-    ESP.reset();
+    ESP.restart();
     delay(5000);
   }
 
   if (hasHostname) { // valid config found on FS, set network name
-    WiFi.hostname(String(nodename)); // set network hostname
+    WiFi.setHostname(nodename); // set network hostname
     MDNS.begin(nodename); // set mDNS hostname
   }
 
@@ -1444,7 +1463,9 @@ void doVout() {
   memset(adcChr,0,sizeof(adcChr));
 
   if (useGetvcc) {
-    vBat += ESP.getVcc(); // internal voltage reference (Vcc);
+    // no more getVcc, find replacement
+    vBat = 3300;
+    //vBat += ESP.getVcc(); // internal voltage reference (Vcc);
     voltage = vBat / 1000.0;
     vStr = String(voltage,3);
   } else {
@@ -1536,6 +1557,8 @@ void doPolo() {
 void loop() {
   long loopNow = millis();
 
+  // no safemode until I figure out reboot reason
+  /*
   if (safeMode) { // safeMode engaged, enter blocking loop wait for an OTA update
     int safeDelay=30000; // five minutes in 100ms counts
     while (safeDelay--) {
@@ -1543,10 +1566,11 @@ void loop() {
       delay(100);
     }
     writeLog("reboot","safemode");
-    ESP.reset(); // restart, try again
+    ESP.restart(); // restart, try again
     delay(5000); // give esp time to reboot
   }
-  
+  */
+
   ArduinoOTA.handle(); // handle OTA updates
   if (useMQTT) checkMQTT(); // keep mqtt alive if enabled
 
