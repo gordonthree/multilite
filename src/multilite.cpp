@@ -901,7 +901,7 @@ boolean mqttReconnect() {
       mqtt.subscribe(tmp);
     }
     if (hasSpeed) { // subscribe to speed control topic
-      sprintf(tmp, "%s/fan/setspd\0", mqttbase);
+      sprintf(tmp, "%s/fan/setspeed\0", mqttbase);
       mqtt.subscribe(tmp);
       sprintf(tmp, "%s/fan/setdir\0", mqttbase);
       mqtt.subscribe(tmp);
