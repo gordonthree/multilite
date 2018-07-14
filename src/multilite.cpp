@@ -726,8 +726,6 @@ void getConfig() { // start the process to get config from api server
 }
 
 void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
-  mqttPrintStr("debug",cmdStr);
-
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
@@ -735,23 +733,18 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   if (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
   else if (strcmp(cmdTxt, "reboot")==0) setReset = true; // reboot controller
   else if (strcmp(cmdTxt, "ch1en")==0) {
-    mqttPrintInt("debug", sw1);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
-      mqttPrintInt("ch1en",i);
       if (i == 1) { // ON
-        mqttPrintStr("ch1en","on");
         ch1en=1;
         digitalWrite(sw1, _ON); // nothing fancy for manual mode,
       } else { // OFF
-        mqttPrintStr("ch1en","off");
         ch1en=0;
         digitalWrite(sw1, _OFF); // nothing fancy for manual mode,
       }
     }
   }
   else if (strcmp(cmdTxt, "ch2en")==0) {
-    mqttPrintInt("debug", sw2);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
@@ -764,7 +757,6 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
     }
   }
   else if (strcmp(cmdTxt, "ch3en")==0) {
-    mqttPrintInt("debug", sw3);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
@@ -777,7 +769,6 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
     }
   }
   else if (strcmp(cmdTxt, "ch4en")==0) {
-    mqttPrintInt("debug", sw4);
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
       if (i == 1) { // ON
