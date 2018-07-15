@@ -45,11 +45,45 @@ char ntpServerName[32] = "us.pool.ntp.org";
 char* iotSrv = "192.168.2.30"; // automation api server name
 #endif
 
+#ifdef _PWMC // SDK based PWM code
+extern "C"{
+	#include "pwm.h"
+	#include "user_interface.h"
+}
 
+////// PWM
+
+// Period of PWM frequency -> default of SDK: 5000 -> * 200ns ^= 1 kHz
+
+#define PWM_PERIOD 5000 // this is how many steps from full off to full on. less steps means higher freq
+
+// PWM channels
+
+#define PWM_CHANNELS 3
+
+// PWM setup (choice all pins that you use PWM)
+
+uint32 io_info[PWM_CHANNELS][3] = {
+	// MUX, FUNC, PIN
+	{PERIPHS_IO_MUX_GPIO5_U, FUNC_GPIO5,   5}, // D1
+	{PERIPHS_IO_MUX_GPIO4_U, FUNC_GPIO4,   4}, // D2
+//	{PERIPHS_IO_MUX_GPIO0_U, FUNC_GPIO0,   0}, // D3
+	{PERIPHS_IO_MUX_GPIO2_U, FUNC_GPIO2,   2}, // D4
+//	{PERIPHS_IO_MUX_MTMS_U,  FUNC_GPIO14, 14}, // D5
+//	{PERIPHS_IO_MUX_MTDI_U,  FUNC_GPIO12, 12}, // D6
+//	{PERIPHS_IO_MUX_MTCK_U,  FUNC_GPIO13, 13}, // D7
+//	{PERIPHS_IO_MUX_MTDO_U,  FUNC_GPIO15 ,15}, // D8
+											   // D0 - not have PWM :-(
+};
+
+// PWM initial duty: all off
+
+uint32 pwm_duty_init[PWM_CHANNELS];
+#endif
 
 const char* logFileName = "/log.csv"; // spiffs system log file name
-const char* cfgFileName = "/iot.json"; // config filename
-const int jsonSize = 1024;
+const char* cfgFileName = "/iot.json"; // config filename (json config)
+const int jsonSize = 1024; // memory to set aside to store json data
 
 #define ADC 0x49
 #define ADCPWR 0x20
@@ -922,6 +956,28 @@ boolean mqttReconnect() {
   }
   return mqtt.connected();
 }
+
+#ifdef _PWMC
+void setupPWM() { // setup SDK pwm generator function
+  	// Initial duty -> all off
+
+	for (uint8_t channel = 0; channel < PWM_CHANNELS; channel++) {
+		pwm_duty_init[channel] = 0;
+	}
+  
+	// Period
+
+	uint32_t period = PWM_PERIOD;
+
+	// Initialize
+
+	pwm_init(period, pwm_duty_init, PWM_CHANNELS, io_info);
+
+	// Commit
+
+	pwm_start();
+}
+#endif
 
 void setupADC() { // init routine for adc + io expander board
   if (!hasI2C) return; // bail out if no i2c
