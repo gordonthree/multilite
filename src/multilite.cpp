@@ -117,7 +117,7 @@ char sw1label[32], sw2label[32], sw3label[32], sw4label[32];
 char nodename[32];
 char vdivsor[8];
 int OWDAT=-1; //
-int  mqttport=0;
+int  mqttPort=0;
 char mqttServer[32], mqttpub[64],mqttsub[64], mqttbase[64];
 char fwversion[6]; // storage for sketch image version
 char fsversion[6]; // storage for spiffs image version
@@ -150,6 +150,7 @@ unsigned char mqttFail = 0;
 unsigned char speedAddr = 0; // i2c address for speed control chip
 unsigned char fanSpeed=0, fanDirection=0;
 int sw1 = -1, sw2 = -1, sw3 = -1, sw4 = -1;
+bool useMQTT = false;
 bool rebootMQTT = true; // flag to signal reboot on mqtt broker unavailable
 bool altAdcvbat = false;
 bool safeMode = false;
@@ -159,7 +160,6 @@ bool hasSerial = false;
 bool fileSet = false;
 bool firstBoot = true;
 bool clientCon = false; // flag for websock connection
-bool useMQTT = false; // flag for mqtt available
 bool setPolo = false;
 bool doUpdate = false;
 bool getRGB = false;
@@ -275,7 +275,7 @@ void i2c_readbytes(uint8_t address, uint8_t cmd, uint8_t bytecnt) {
 }
 
 void mqttPrintStr(char* _topic, char* myStr) {
-  if (!useMQTT) return; // abort if mqtt not setup
+  if (!mqtt.connected()) return; // bail out if there's no mqtt connection
   char myTopic[255];
   sprintf(myTopic, "%s/%s\0", mqttbase, _topic);
   mqtt.publish(myTopic, myStr);
@@ -325,14 +325,14 @@ void printSwitches() {
 
 void wsSend(const char* _str) {
   if (sizeof(_str)<=1) return; // don't send blank messages
-  if (wsConcount>0) {
+  if (wsConcount>0) { // send websocket message to all connected clients
     for (int x=0; x<wsConcount; x++) {
       webSocket.sendTXT(x, _str);
     }
   }
 }
 
-void i2c_scan() {
+void i2c_scan() { // probe i2c bus for endpoints
   scanI2C = false;
   uint8_t error, address;
   uint8_t nDevices;
@@ -350,10 +350,7 @@ void i2c_scan() {
     if (error == 0) {
       sprintf(str,"i2c dev %d: %x", nDevices, address);
       wsSend(str);
-      if (useMQTT) {
-        mqttPrintStr(mqttpub, str);
-        mqtt.loop();
-      }
+      mqttPrintStr(mqttpub, str);
       delay(10);
       nDevices++;
     }
@@ -361,7 +358,7 @@ void i2c_scan() {
   mqttPrintStr(mqttpub, "I2C scan complete.");
 }
 
-void writeLog(const char* _event, const char* _message) {
+void writeLog(const char* _event, const char* _message) { // write debug information to log on SPIFFS
   time_t ts = now();
 
   File logFile = SPIFFS.open(logFileName,"a");
@@ -381,22 +378,21 @@ void writeLog(const char* _event, const char* _message) {
   logFile.close();
 }
 
-void deleteLog() {
+void deleteLog() { // remove debug log from SPIFFS
   rmLog = false;
   if (SPIFFS.remove(logFileName)) mqttPrintStr("log", "Log file removed");
   writeLog("system","log file removed");
 }
 
-void deleteConfig() {
+void deleteConfig() { // remove JSON config file from SPIFFS
   rmConfig = false;
   if (SPIFFS.remove(cfgFileName)) {
     mqttPrintStr("config", "Config file removed");
     writeLog("system","config file removed");
   } 
-  
 }
 
-void readLog() {
+void readLog() { // read and print to mqtt debug messages from log file on SPIFFS
   const uint8_t bSize=240;
   const char endLine = '\n';
   char logLine[bSize];
@@ -426,7 +422,7 @@ void readLog() {
 }
 
 
-void httpUpdater() {
+void httpUpdater() { // check with IoT server to see if a firmware update is available
   printIOTurl();
   mqttPrintStr("http_update", "Checking...");
   //writeLog("http_update", "checking");
@@ -484,7 +480,7 @@ void wsSendFloat(const char* label, float num) {
   wsSend(str);
 }
 
-void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
+void speedControl(uint8_t fanSpeed, uint8_t fanDirection) { // send fan speed control commands to tiny85 fan control chip
   if (!hasI2C) return; // bail out if i2c not setup
 
   //sprintf(str,"Fan %u dir %u speed %u", speedAddr, fanDirection, fanSpeed);
@@ -555,7 +551,7 @@ int loadConfig(bool setFSver) {
 
   sleepEn = json["sleepenable"];
   sleepPeriod = json["sleepperiod"];
-  mqttport = json["mqttport"];
+  mqttPort = json["mqttport"];
   ver = json["cfgversion"];
   useGetvcc = json["usegetvcc"];
   hasRGB = json["hasrgb"];
@@ -641,7 +637,7 @@ void doReset() { // reboot on command
 void wsSendlabels(uint8_t _num) { // send switch labels only to newly connected websocket client
   memset(str,0,sizeof(str));
   sprintf(str,"sending labels: sw1=%d %d sw2=%d %d sw3=%d %d sw4=%d %d",sw1,sw1type,sw2,sw2type,sw3,sw3type,sw4,sw4type);
-  mqttPrintStr(mqttpub, str);
+  // mqttPrintStr(mqttpub, str);
   wsSend(str);
   char labelStr[8];
   if (sw1>=0) {
@@ -701,10 +697,9 @@ void wsSwitchstatus() {
     sprintf(swChr,"sw4=%u",ch4en);
     wsSend(swChr);
   }
-
 }
 
-int requestConfig(bool save) {
+int requestConfig(bool save) { // download JSON config file from IoT server, if available
   int ret = -1;
 
   HTTPClient http;
@@ -889,7 +884,7 @@ void webSocketEvent(uint8_t num, WStype_t type, uint8_t * payload, size_t length
   }
 }
 
-// receive mqtt messages
+// receive mqtt messages, also handle subscription specific commands
 void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   char tmp[len];
 
@@ -898,6 +893,7 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
   skipSleep=true; // don't go to sleep if we receive mqtt message
   strncpy(tmp, (char*)payload, len);
   tmp[len] = '\0';
+
   if (strstr(topic, "setspeed")) {
     if (tmp!=NULL) fanSpeed = atoi(tmp);}
   else if (strstr(topic, "setdir")) {
@@ -921,7 +917,6 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
 
 // maintain connection to mqtt broker
 boolean mqttReconnect() {
-  if (!useMQTT) return false; // bail out if mqtt is not configured
   char tmp[200];
 
   // Attempt to connect
@@ -1012,7 +1007,6 @@ int16_t getAdc(uint8_t chan) {
 }
 
 void printADC() { // print adc values to mqtt
-  if (!useMQTT) return;
   for (int x=0; x<4; x++) {
     if (adcEnable&1<<x) {
       sprintf(str,"%s/adc%u",mqttbase,x); // example home/solar1/adc0
@@ -1028,37 +1022,41 @@ void doADC() { // figure out which ADC to read and do it
   printADC(); // display results
 }
 
+void setupWS() {
+  // start websockets server
+  webSocket.begin();
+  webSocket.onEvent(webSocketEvent);
+}
+
 void setupOTA() { // init arduino ide ota library
   if (hasHostname) ArduinoOTA.setHostname(nodename);  // OTA hostname
 
   ArduinoOTA.onStart([]() {
-    writeLog("ota", "start");
+    writeLog("ota", "Starting");
   });
   ArduinoOTA.onEnd([]() {
-    writeLog("ota", "complete");
+    writeLog("ota", "Complete");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
     //Serial.print(".");
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    writeLog("ota", "failure");
-
-    //Serial.printf("Error[%u]: ", error);
-    //if (error == OTA_AUTH_ERROR) Serial.println("Auth Failed");
-    //else if (error == OTA_BEGIN_ERROR) Serial.println("Begin Failed");
-    //else if (error == OTA_CONNECT_ERROR) Serial.println("Connect Failed");
-    //else if (error == OTA_RECEIVE_ERROR) Serial.println("Receive Failed");
-    //else if (error == OTA_END_ERROR) Serial.println("End Failed");
+    if (error == OTA_AUTH_ERROR) writeLog("ota", "Auth failed");
+    else if (error == OTA_BEGIN_ERROR) writeLog("ota", "Begin Failed");
+    else if (error == OTA_CONNECT_ERROR) writeLog("ota", "Connect Failed");
+    else if (error == OTA_RECEIVE_ERROR) writeLog("ota", "Receive Failed");
+    else if (error == OTA_END_ERROR) writeLog("ota", "End Failed");
   });
 
   ArduinoOTA.begin(); // start listening for arduinoota updates
 }
 
 void setupMQTT() {
-  if (mqttport>0) { // port defined, setup connection
-    useMQTT = true; // set a flag that mqtt is in use
-    mqtt.setServer(mqttServer, mqttport); // setup mqtt broker connection
+  if (mqttPort>0) { // port defined, setup connection
+    useMQTT = true; // let everything know mqtt is configured
+    mqtt.setServer(mqttServer, mqttPort); // setup mqtt broker connection
     mqtt.setCallback(mqttCallBack); // install function to handle incoming mqtt messages
+    bool connected = mqttReconnect();
   }
 }
 
@@ -1092,8 +1090,8 @@ void updateNTP() {
 }
 
 void doSpeedout() {
-    mqttPrintInt("fan/speed",fanSpeed);
-    mqttPrintInt("fan/direction",fanDirection);
+    mqttPrintInt("fan/speed", fanSpeed);
+    mqttPrintInt("fan/direction", fanDirection);
 
     wsSendInt("fanspd", fanSpeed);
     wsSendInt("fandir", fanDirection);
@@ -1133,7 +1131,7 @@ void wsData() { // send some websockets data if client is connected
 
 void mqttSendTime(time_t _time) {
   // if (hasRGB) return; // feature disabled if we're an rgb controller
-  if ((!mqtt.connected()) || (!timeOut)) return; // bail out if there's no mqtt connection
+  if ((!mqtt.connected()) || (!timeOut)) return; // bail out if there's no mqtt connection or time output disabled
   if (_time <= oldEpoch) return; // don't bother if it's been less than 1 second
   memset(str,0,sizeof(str));
   sprintf(str,"%ld", _time);
@@ -1148,12 +1146,12 @@ void mqttData() { // send mqtt messages as required
 
   if (hasTout) mqttPrintStr("temp", tmpChr); // print temperature if equipped
 
+  if (hasRGB) return; // further prints disabled if we're an rgb controller to save time
+
   if (hasTstat) {
     mqttPrintInt("tstat/amb", tstatAmb);
     mqttPrintInt("tstat/rh", tstatRh); // print temperature if equipped
   }
-
-  if (hasRGB) return; // further prints disabled if we're an rgb controller to save time
 
   if (hasVout) {
     mqttPrintFloat("volts", volts0); // print voltage if equipped
@@ -1175,6 +1173,8 @@ void mqttData() { // send mqtt messages as required
 }
 
 void doRGB() { // send updated values to the first four channels of the pwm chip
+  if (!hasRGB) return; // bail out if RGB not enabled
+
   // need to expand this to support four 4-channel groups, some sort of array probably
   uint8_t _r,_g,_b,_w;
   _r = (rgbwChan>>6)&3; // first nibble
@@ -1213,6 +1213,7 @@ void doRGB() { // send updated values to the first four channels of the pwm chip
 
 
 void testRGB() {
+  if (!hasRGB) return; // bail out if RGB not enabled
   red=255; blue=0; green=0; white=0;
   doRGB();
   delay(250);
@@ -1246,7 +1247,6 @@ void setupRGB() { // init pca9633 pwm chip
 
   sprintf(str,"RGBW channel assignments %u %u %u %u", _r, _g, _b, _w);
   mqttPrintStr(mqttpub, str);
-
 }
 
 void setupADS() {
@@ -1393,7 +1393,11 @@ void printTstat() { // print thermostat configuration specifics
 void setup() {
   memset(tmpChr,0,sizeof(tmpChr));
 
-    // if the program crashed, skip things that might make it crash
+  // "mount" the filesystem
+  bool success = SPIFFS.begin();
+  if (!success) SPIFFS.format();
+
+  // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
   if (rebootMsg=="Exception") safeMode=true;
   else if (rebootMsg=="Hardware Watchdog") safeMode=true;
@@ -1404,10 +1408,6 @@ void setup() {
   // record reboot reason to log
   rebootMsg.toCharArray(rebootChar, rebootMsg.length()+1);
   writeLog("reboot",rebootChar);
-
-  // "mount" the filesystem
-  bool success = SPIFFS.begin();
-  if (!success) SPIFFS.format();
 
   if (!safeMode) fsConfig(); // read node config from FS
 
@@ -1444,26 +1444,19 @@ void setup() {
   // check web api for new firmware
   if (!safeMode) httpUpdater();
 
-  // test ntp connection
+  // set time from ntp
   updateNTP();
 
   setSyncProvider(getNtptime); // use NTP to get current time
   setSyncInterval(600); // refresh clock every 10 min
 
-  // start websockets server
-  webSocket.begin();
-  webSocket.onEvent(webSocketEvent);
 
   // setup other things
+  setupWS();
   setupOTA();
   setupMQTT();
 
-  if (useMQTT) {
-    // String rebootReason = String("Last reboot cause was ") + rebootMsg;
-    // rebootReason.toCharArray(str, rebootReason.length()+1);
-    rebootMsg.toCharArray(str, rebootMsg.length()+1);
-    mqttPrintStr("reboot/reason", str);
-  }
+  mqttPrintStr("reboot/reason", rebootChar);
 
   // setup i2c if configured, basic sanity checking on configuration
   if (hasI2C && iotSDA>=0 && iotSCL>=0 && iotSDA!=iotSCL) {
@@ -1534,12 +1527,6 @@ void doRGBout() {
   getRGB=false;
 }
 
-void doRSSI() {
-  // int rssi = WiFi.RSSI();
-  // memset(rssiChr,0,sizeof(rssiChr));
-  // sprintf(rssiChr, "%d", rssi);
-}
-
 void doSpeed() {
   speedControl(fanSpeed, fanDirection);
   doSpeedout();
@@ -1576,7 +1563,7 @@ void doIout() { // enable current reporting if module is so equipped
 void runUpdate() { // test for http update flag, received url via mqtt
   doUpdate = false; // clear flag
   updateCnt = 0; // clear update counter
-  if (useMQTT && !hasRGB) {
+  if (!hasRGB) {
     mqttPrintStr(mqttpub, "Checking for updates");
     mqtt.loop();
   }
@@ -1618,7 +1605,6 @@ void loop() {
 
     if (hasADC)   doADC();
     if (hasTstat) doTstat();
-    if (hasRSSI)  doRSSI();
     if (hasTout)  doTout();
     if (hasVout)  doVout();
     if (hasIout)  doIout();
