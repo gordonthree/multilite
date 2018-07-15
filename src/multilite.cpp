@@ -45,7 +45,10 @@ char ntpServerName[32] = "us.pool.ntp.org";
 char* iotSrv = "192.168.2.30"; // automation api server name
 #endif
 
-const char* jsonFile = "/iot.json"; // fs config filename
+
+
+const char* logFileName = "/log.csv"; // spiffs system log file name
+const char* cfgFileName = "/iot.json"; // config filename
 const int jsonSize = 1024;
 
 #define ADC 0x49
@@ -327,7 +330,7 @@ void i2c_scan() {
 void writeLog(const char* _event, const char* _message) {
   time_t ts = now();
 
-  File logFile = SPIFFS.open("log.csv","a");
+  File logFile = SPIFFS.open(logFileName,"a");
   if (!logFile) {
     return; // oh well we tried
   }
@@ -346,13 +349,13 @@ void writeLog(const char* _event, const char* _message) {
 
 void deleteLog() {
   rmLog = false;
-  if (SPIFFS.remove("log.csv")) mqttPrintStr("log", "Log file removed");
+  if (SPIFFS.remove(logFileName)) mqttPrintStr("log", "Log file removed");
   writeLog("system","log file removed");
 }
 
 void deleteConfig() {
   rmConfig = false;
-  if (SPIFFS.remove("/iot.json")) {
+  if (SPIFFS.remove(cfgFileName)) {
     mqttPrintStr("config", "Config file removed");
     writeLog("system","config file removed");
   } 
@@ -370,7 +373,7 @@ void readLog() {
   memset(tempStr,0,sizeof(tempStr));
 
   mqttPrintStr("log", "Attempting to open log file");
-  File logFile = SPIFFS.open("log.csv","r");
+  File logFile = SPIFFS.open(logFileName,"r");
   if (!logFile) {
     mqttPrintStr("log", "Failed to open log file");
     return; // oh well we tried
@@ -462,7 +465,7 @@ void speedControl(uint8_t fanSpeed, uint8_t fanDirection) {
 
 int loadConfig(bool setFSver) {
   int ver = -1;
-  File configFile = SPIFFS.open(jsonFile, "r");
+  File configFile = SPIFFS.open(cfgFileName, "r");
   if (!configFile) {
     return ver;
   }
@@ -700,7 +703,7 @@ int requestConfig(bool save) {
           } else { // parsing successful, save file
             ret = root["cfgversion"];
             if (save==true) {
-              File configFile = SPIFFS.open(jsonFile, "w");
+              File configFile = SPIFFS.open(cfgFileName, "w");
               if (!configFile) {
                 ret = -1;
               }
