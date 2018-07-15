@@ -58,7 +58,7 @@ char str[64];
 char mqttbase[64];
 char mqttsub[100];
 
-const char* nodename="frontswitch";
+const char* nodename="awning";
 const char* myPub="msg";
 const char* mySub="cmd";
 
@@ -121,6 +121,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   char* cmdVal = strtok(NULL, "=");
 
   if      (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
+  else if (strcmp(cmdTxt, "reboot")==0) ESP.restart();
   else if (strcmp(cmdTxt, "ch1en")==0) {
     if (cmdVal!=NULL) {
       uint8_t i = atoi(cmdVal);
