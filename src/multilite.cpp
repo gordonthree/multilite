@@ -626,11 +626,11 @@ int loadConfig(bool setFSver) {
   return ver;
 }
 
-void doReset() { // reboot on command
+void doReset(char* _reason="user request") { // reboot on command
       mqttPrintStr(mqttpub, "Rebooting!");
       delay(50);
-      writeLog("reboot","user request");
-      ESP.reset();
+      writeLog("reboot", _reason);
+      ESP.restart();
       delay(5000); // allow time for reboot
 }
 
@@ -918,9 +918,11 @@ void mqttCallBack(char* topic, uint8_t* payload, unsigned int len) {
 // maintain connection to mqtt broker
 boolean mqttReconnect() {
   char tmp[200];
+  mqttFail++; // increment fail counter
 
   // Attempt to connect
   if (mqtt.connect(nodename)) {
+    mqttFail=0;
     // Once connected, publish an announcement...
     mqttPrintStr(mqttpub, "Hello, world!");
     // ... and resubscribe
@@ -949,6 +951,7 @@ boolean mqttReconnect() {
       mqtt.subscribe(tmp);
     }
   }
+  if (mqttFail>200) doReset("mqtt failure");
   return mqtt.connected();
 }
 
@@ -1424,8 +1427,8 @@ void setup() {
   }
 
   if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
-    writeLog("reboot","no wifi at boot");
-    ESP.reset();
+    // writeLog("reboot","no wifi at boot");
+    doReset("unable to connect to wifi");
     delay(5000);
   }
 
@@ -1586,9 +1589,8 @@ void loop() {
       ArduinoOTA.handle();
       delay(100);
     }
-    writeLog("reboot","safemode");
-    ESP.reset(); // restart, try again
-    delay(5000); // give esp time to reboot
+    //writeLog("reboot","safemode");
+    doReset("safemode timer"); // restart, try again
   }
   
   ArduinoOTA.handle(); // handle OTA updates
