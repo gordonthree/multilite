@@ -1392,6 +1392,7 @@ void printTstat() { // print thermostat configuration specifics
 
 void setup() {
   memset(tmpChr,0,sizeof(tmpChr));
+  Serial.begin(115200);
 
   // "mount" the filesystem
   bool success = SPIFFS.begin();
@@ -1408,14 +1409,19 @@ void setup() {
   // record reboot reason to log
   rebootMsg.toCharArray(rebootChar, rebootMsg.length()+1);
   writeLog("reboot",rebootChar);
+  Serial.printf("reboot reason %s\m", rebootChar);
 
+  Serial.print("read config");
   if (!safeMode) fsConfig(); // read node config from FS
+  Serial.println("done");
 
 #ifdef _TRAILER
   WiFi.begin("DXtrailer", "2317239216");
 #else
   WiFi.begin("Tell my WiFi I love her", "2317239216");
 #endif
+
+  Serial.print("WiFi connecting... ");
 
   int wifiConnect = 90;
   while ((WiFi.status() != WL_CONNECTED) && (wifiConnect-- > 0)) { // spend 90 seconds trying to connect to wifi
@@ -1428,19 +1434,24 @@ void setup() {
     ESP.reset();
     delay(5000);
   }
+  Serial.println("Connected");
 
   if (hasHostname) { // valid config found on FS, set network name
     WiFi.hostname(String(nodename)); // set network hostname
     MDNS.begin(nodename); // set mDNS hostname
+    Serial.printf("using %s for hostname\n");
+
   }
 
   WiFi.macAddress(mac); // get esp mac address, store it in memory, build fw update url
   sprintf(macStr,"%x%x%x%x%x%x", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
   sprintf(theURL,"/iotfw?mac=%s", macStr);
 
+  Serial.println("checking for new config");
   // request latest config from web api
   if (!safeMode) getConfig();
 
+  Serial.println("checking for new firmware");
   // check web api for new firmware
   if (!safeMode) httpUpdater();
 
@@ -1450,7 +1461,7 @@ void setup() {
   setSyncProvider(getNtptime); // use NTP to get current time
   setSyncInterval(600); // refresh clock every 10 min
 
-
+  Serial.println("setup network services");
   // setup other things
   setupWS();
   setupOTA();
@@ -1468,6 +1479,8 @@ void setup() {
     //Wire.begin(12, 14); // from api config file
     i2c_scan();
   }
+
+  Serial.println("setup modules");
 
   // setup any connected modules
   if (hasRGB) setupRGB();
@@ -1491,6 +1504,8 @@ void setup() {
       digitalWrite(hasTpwr, LOW); // ow off
     }
   }
+
+  Serial.println("end of setup()");
 
   writeLog("system", "online");
 } // end of setup()
