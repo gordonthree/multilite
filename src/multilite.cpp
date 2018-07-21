@@ -1412,6 +1412,10 @@ void setup() {
   rebootMsg.toCharArray(rebootChar, rebootMsg.length()+1);
   writeLog("reboot",rebootChar);
 
+  #ifdef _RMCONFIG
+    deleteConfig();
+  #endif
+
   if (!safeMode) fsConfig(); // read node config from FS
 
 #ifdef _TRAILER
