@@ -12,6 +12,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
+#include <ESP8266Ping.h>
 #include <PubSubClient.h>
 #include "DallasTemperature.h"
 #include "pca9633.h"
@@ -145,6 +146,7 @@ uint8_t red=0,green=0,blue=0,white=0;
 uint8_t oldred=0,oldgreen=0,oldblue=0,oldwhite=0;
 uint8_t rgbwChan=57; // b00111001 four nibbles to map RGBW to pwm channels
 uint8_t updateCnt = 0;
+uint8_t wifiFailed = 5;
 unsigned char newWScon = 0;
 unsigned char mqttFail = 0;
 unsigned char speedAddr = 0; // i2c address for speed control chip
@@ -175,7 +177,7 @@ bool hasSpeed = false; // has pwm speed control chip (unimplemented)
 bool hasRSSI = false; // output RSSI
 bool hasFan = false; // flag for fan controller
 bool hasDimmer = false; // flag for pwm dimming support
-unsigned char hasTpwr = false; // has dallas power control (pin number)
+uint8_t hasTpwr = false; // has dallas power control (pin number)
 bool hasI2C = false; // has i2c bus
 bool hasI2Cpwr = false; // has i2c bus power control
 bool rawadc = false; // output raw internal adc reading
@@ -194,6 +196,7 @@ unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 long loopTimer = 0;
 long lastReconnectAttempt = 0;
+long loopCount = 0;
 
 int ch1en = -1, ch2en = -1, ch3en = -1, ch4en = -1;
 
@@ -626,10 +629,10 @@ int loadConfig(bool setFSver) {
   return ver;
 }
 
-void doReset() { // reboot on command
+void doReset(char* resetReason = "user request") { // reboot on command
       mqttPrintStr(mqttpub, "Rebooting!");
       delay(50);
-      writeLog("reboot","user request");
+      writeLog("reboot", resetReason);
       ESP.reset();
       delay(5000); // allow time for reboot
 }
@@ -1398,6 +1401,10 @@ void setup() {
   bool success = SPIFFS.begin();
   if (!success) SPIFFS.format();
 
+  #ifdef _RMCONFIG
+  deleteConfig();
+  #endif
+  
   // if the program crashed, skip things that might make it crash
   String rebootMsg = ESP.getResetReason();
   if (rebootMsg=="Exception") safeMode=true;
@@ -1440,9 +1447,7 @@ void setup() {
 
   if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
     Serial.println("failed, rebooting.");
-    writeLog("reboot","no wifi at boot");
-    ESP.reset();
-    delay(5000);
+    doReset("no wifi at boot");
   }
   Serial.println("connected.");
   Serial.printf("Connection status: %d\r\n", WiFi.status());
@@ -1614,9 +1619,7 @@ void loop() {
       ArduinoOTA.handle();
       delay(100);
     }
-    writeLog("reboot","safemode");
-    ESP.reset(); // restart, try again
-    delay(5000); // give esp time to reboot
+    doReset("safemode in loop");
   }
   
   ArduinoOTA.handle(); // handle OTA updates
@@ -1630,8 +1633,19 @@ void loop() {
   if (loopNow - loopTimer > updateRate*10) { // code below runs every few seconds
     loopTimer = loopNow;
     mqttPrintInt("uptime",loopNow/1000);
-    Serial.printf("uptime %d\r\n", loopNow/1000);
-
+    Serial.printf("loop count %d uptime %d\r\n",loopCount++, loopNow/1000);
+    
+    Serial.printf("Ping %s... ", iotSrv);
+    
+    if (Ping.ping(iotSrv)) {
+      Serial.printf("%d\r\n", Ping.averageTime());
+      wifiFailed = 5;
+    } else {
+      Serial.println("failed.");
+      Serial.printf("Connection problem, rebooting in %u\r\n", wifiFailed--);
+      if (wifiFailed == 0) doReset("no wifi in loop");      
+    }
+    
     if (hasADC)   doADC();
     if (hasTstat) doTstat();
     if (hasTout)  doTout();
@@ -1645,6 +1659,7 @@ void loop() {
     if (setPolo)  doPolo(); // respond to ping
 
     if (updateCnt++ > 6) {
+      Serial.println("checking for updates");
       updateCnt=0;
       runUpdate(); // check for config update 
     }
