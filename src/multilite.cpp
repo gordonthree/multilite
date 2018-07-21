@@ -189,7 +189,7 @@ bool timeOut = false; // flag to report time via mqtt
 bool hasADC = false; // flag for ads1015 support
 bool coldBoot = true; // assume every boot is cold unless told otherwise
 bool rmLog = false; // flag to remove spiffs log file
-bool rmConfig = false; // flag to remove spiffs config file
+bool rmConfig = true; // flag to remove spiffs config file
 unsigned char ntpOffset = 4; // offset from GMT
 uint8_t iotSDA = 12, iotSCL = 14; // i2c bus pins
 long loopTimer = 0;
@@ -1409,11 +1409,20 @@ void setup() {
   // record reboot reason to log
   rebootMsg.toCharArray(rebootChar, rebootMsg.length()+1);
   writeLog("reboot",rebootChar);
-  Serial.printf("reboot reason %s\m", rebootChar);
+  Serial.println();
+  Serial.println();
+  Serial.printf("reboot reason %s\r\n", rebootChar);
 
-  Serial.print("read config");
+  if (rmConfig) {
+    Serial.println("Deleting config file.");
+    deleteConfig();
+  }
+
+  Serial.print("read config... ");
   if (!safeMode) fsConfig(); // read node config from FS
   Serial.println("done");
+
+  Serial.printf("Using IOT server %s\r\n", iotSrv);
 
 #ifdef _TRAILER
   WiFi.begin("DXtrailer", "2317239216");
@@ -1430,17 +1439,20 @@ void setup() {
   }
 
   if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
+    Serial.println("failed, rebooting.");
     writeLog("reboot","no wifi at boot");
     ESP.reset();
     delay(5000);
   }
-  Serial.println("Connected");
+  Serial.println("connected.");
+  Serial.printf("Connection status: %d\r\n", WiFi.status());
+  Serial.println(WiFi.localIP());
 
   if (hasHostname) { // valid config found on FS, set network name
     WiFi.hostname(String(nodename)); // set network hostname
     MDNS.begin(nodename); // set mDNS hostname
-    Serial.printf("using %s for hostname\n");
-
+    Serial.printf("using %s for hostname",nodename);
+    Serial.println();
   }
 
   WiFi.macAddress(mac); // get esp mac address, store it in memory, build fw update url
@@ -1596,6 +1608,7 @@ void loop() {
   long loopNow = millis();
 
   if (safeMode) { // safeMode engaged, enter blocking loop wait for an OTA update
+    Serial.println("Using safemode, waiting for 30 sec for OTA.");
     int safeDelay=30000; // five minutes in 100ms counts
     while (safeDelay--) {
       ArduinoOTA.handle();
@@ -1617,6 +1630,7 @@ void loop() {
   if (loopNow - loopTimer > updateRate*10) { // code below runs every few seconds
     loopTimer = loopNow;
     mqttPrintInt("uptime",loopNow/1000);
+    Serial.printf("uptime %d\r\n", loopNow/1000);
 
     if (hasADC)   doADC();
     if (hasTstat) doTstat();
