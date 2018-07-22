@@ -12,6 +12,7 @@
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266httpUpdate.h>
+#include <ESP8266Ping.h>
 #include <PubSubClient.h>
 #include "DallasTemperature.h"
 #include "pca9633.h"
@@ -38,11 +39,11 @@
 #endif
 
 #ifdef _TRAILER // iot node for rv application
-char ntpServerName[32] = "192.168.10.30";
-char* iotSrv = "192.168.10.30"; // automation api server name
+char ntpServerName[32] = "192.168.10.20";
+char iotSrv[16] = "192.168.10.20"; // automation api server name
 #else // iot node for home application
 char ntpServerName[32] = "us.pool.ntp.org";
-char* iotSrv = "192.168.2.30"; // automation api server name
+char iotSrv[16] = "192.168.2.30"; // automation api server name
 #endif
 
 #ifdef _PWMC // SDK based PWM code
@@ -145,6 +146,7 @@ uint8_t red=0,green=0,blue=0,white=0;
 uint8_t oldred=0,oldgreen=0,oldblue=0,oldwhite=0;
 uint8_t rgbwChan=57; // b00111001 four nibbles to map RGBW to pwm channels
 uint8_t updateCnt = 0;
+uint8_t wifiFailed = 0;
 unsigned char newWScon = 0;
 unsigned char mqttFail = 0;
 unsigned char speedAddr = 0; // i2c address for speed control chip
@@ -389,7 +391,7 @@ void deleteConfig() { // remove JSON config file from SPIFFS
   if (SPIFFS.remove(cfgFileName)) {
     mqttPrintStr("config", "Config file removed");
     writeLog("system","config file removed");
-  } 
+  }
 }
 
 void readLog() { // read and print to mqtt debug messages from log file on SPIFFS
@@ -431,7 +433,7 @@ void httpUpdater() { // check with IoT server to see if a firmware update is ava
   memset(tempStr,0,sizeof(tempStr));
 
   t_httpUpdate_return ret = ESPhttpUpdate.update(iotSrv, iotPort, theURL, fwversion);
- 
+
   int errCode = ESPhttpUpdate.getLastError(); // get error code
   String errTxt = ESPhttpUpdate.getLastErrorString(); // get error message as Arduino string
   errTxt.toCharArray(errStr, errTxt.length()+1); // copy error message to char array
@@ -775,7 +777,7 @@ void handleCmd(char* cmdStr) { // handle commands from mqtt or websocket
   // using c string routines instead of Arduino String routines ... a lot faster
   char* cmdTxt = strtok(cmdStr, "=");
   char* cmdVal = strtok(NULL, "=");
-  
+
   if (strcmp(cmdTxt, "marco")==0) setPolo = true; // respond to ping command
   else if (strcmp(cmdTxt, "reboot")==0) setReset = true; // reboot controller
   else if (strcmp(cmdTxt, "ch1en")==0) {
@@ -962,7 +964,7 @@ void setupPWM() { // setup SDK pwm generator function
 	for (uint8_t channel = 0; channel < PWM_CHANNELS; channel++) {
 		pwm_duty_init[channel] = 0;
 	}
-  
+
 	// Period
 
 	uint32_t period = PWM_PERIOD;
@@ -1433,7 +1435,6 @@ void setup() {
   if (WiFi.status() != WL_CONNECTED ) { // still not connected? reboot!
     // writeLog("reboot","no wifi at boot");
     doReset("unable to connect to wifi");
-    delay(5000);
   }
 
   if (hasHostname) { // valid config found on FS, set network name
@@ -1596,7 +1597,7 @@ void loop() {
     //writeLog("reboot","safemode");
     doReset("safemode timer"); // restart, try again
   }
-  
+
   ArduinoOTA.handle(); // handle OTA updates
   if (useMQTT) checkMQTT(); // keep mqtt alive if enabled
 
@@ -1604,6 +1605,8 @@ void loop() {
 
   if (hasRGB) doRGB(); // rgb updates
   if (setReset) doReset(); // execute reboot command
+
+  if (WiFi.status() != WL_CONNECTED) doReset("wifi lost in loop"); // reboot if we lose WiFi
 
   if (loopNow - loopTimer > updateRate*10) { // code below runs every few seconds
     loopTimer = loopNow;
@@ -1623,7 +1626,7 @@ void loop() {
 
     if (updateCnt++ > 6) {
       updateCnt=0;
-      runUpdate(); // check for config update 
+      runUpdate(); // check for config update
     }
 
     if (wsConcount>0) wsData();
