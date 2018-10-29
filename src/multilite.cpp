@@ -58,7 +58,7 @@ char str[64];
 char mqttbase[64];
 char mqttsub[100];
 
-const char* nodename="awning";
+const char* nodename="fridgefan";
 const char* myPub="msg";
 const char* mySub="cmd";
 
